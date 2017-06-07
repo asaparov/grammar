@@ -1,0 +1,5 @@
+*.d
+*.o
+*.exe
+math_induction
+pcfg_induction

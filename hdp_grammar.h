@@ -12,6 +12,7 @@
 #include <hdp/mcmc.h>
 
 #include "grammar.h"
+#include "morphology.h"
 
 struct nonterminal_pair {
 	unsigned int first;
@@ -68,6 +69,10 @@ struct rule_prior
 		  max_nonterminal_probability(src.max_nonterminal_probability),
 		  max_nonterminal_log_probability(src.max_nonterminal_log_probability)
 	{ }
+
+	constexpr part_of_speech get_part_of_speech() const {
+		return POS_OTHER;
+	}
 
 	template<typename Semantics>
 	double probability(const rule<Semantics>& observation) const {

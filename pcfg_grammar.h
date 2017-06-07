@@ -9,6 +9,7 @@
 #define PCFG_GRAMMAR_H_
 
 #include "grammar.h"
+#include "morphology.h"
 
 #include <math/histogram.h>
 

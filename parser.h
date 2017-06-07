@@ -16,7 +16,14 @@
 #include <set>
 
 
-#include "datalog.h" /* TODO: remove this */
+enum set_comparison {
+	SET_SUPERSET,
+	SET_EQUAL,
+	SET_SUBSET
+};
+
+
+/* TODO: the following is for debugging; delete it */
 string_map_scribe* debug_terminal_printer;
 string_map_scribe* debug_nonterminal_printer;
 unsigned int debug = 0;
@@ -24,11 +31,9 @@ bool debug_flag = false;
 bool debug2 = false;
 double debug_priority;
 bool debug_flag2 = false;
-const tree_semantics* debug_root;
-const tree_semantics* debug_left;
-const tree_semantics* debug_left_left;
-const tree_semantics* debug_left_left_left;
+
 thread_local double minimum_priority = 0.0;
+
 
 //#define USE_SLICE_SAMPLING /* comment this to disable slice sampling (only affects sampling) */
 //#define USE_BEAM_SEARCH /* comment this to disable beam search (only affects parsing) */
@@ -2732,26 +2737,6 @@ inline void update_outer_probabilities(
 }
 
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
-void profiler_status(
-	const grammar<Semantics, Distribution>& G,
-	const chart<Mode, Semantics>& parse_chart,
-	const sequence sentence, timer stopwatch)
-{
-	unsigned int total_count = 0;
-	for (unsigned int i = 0; i < sentence.length + 1; i++) {
-		for (unsigned int j = 0; j < sentence.length - i + 1; j++) {
-			for (unsigned int k = 0; k < G.nonterminals.length; k++) {
-				cell_list<Mode, Semantics>& value = parse_chart.cells[i][j][k];
-				unsigned int count = node_count(value);
-				fprintf(stderr, "(%u, %u, %u) has %u nodes\n", k + 1, i, i + j, count);
-				total_count += count;
-			}
-		}
-	}
-	fprintf(stderr, "[profiler] parse: total node count %u\n", total_count);
-}
-
 template<bool AllowAmbiguous, bool Quiet, parse_mode Mode, typename Semantics, typename Distribution>
 bool parse(
 	grammar<Semantics, Distribution>& G,
@@ -3029,27 +3014,25 @@ bool resample(syntax_node<Semantics>** syntax,
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, typename Semantics, typename Distribution>
 bool reparse(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
+	const string** token_map,
 	unsigned int nonterminal = 1)
 {
 	double old_probability = 0.0, new_probability = 0.0;
 	if (!remove_tree(nonterminal, *syntax, logical_form, G, old_probability)) return false;
 
 	/* first compute upper bounds on the inner probabilities */
-timer stopwatch;
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
-			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length);
-printf("[profiler] construct chart for syntactic parsing: %lfms.\n", stopwatch.nanoseconds() / 1000000); stopwatch.start();
-	if (!parse<true>(G, syntax_chart, logical_form, sentence))
+			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	if (!parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence))
 		return false;
-printf("[profiler] syntactic parsing: %lfms.\n", stopwatch.nanoseconds() / 1000000); stopwatch.start();
 
 	/* construct the chart for the semantic parser */
-	chart<MODE_PARSE, Semantics> parse_chart = chart<MODE_PARSE, Semantics>(sentence.length, G.nonterminals.length);
+	chart<MODE_PARSE, Semantics> parse_chart = chart<MODE_PARSE, Semantics>(sentence.length, G.nonterminals.length, token_map);
 
 	/* initialize the inner probabilities */
 	for (unsigned int i = 0; i < sentence.length + 1; i++) {
@@ -3057,26 +3040,20 @@ printf("[profiler] syntactic parsing: %lfms.\n", stopwatch.nanoseconds() / 10000
 			for (unsigned int k = 0; k < G.nonterminals.length; k++) {
 				cell_list<MODE_COMPUTE_BOUNDS, Semantics>& value = syntax_chart.cells[i][j][k];
 				cell_list<MODE_PARSE, Semantics>& cells = parse_chart.get_cells(k + 1, {i, i + j});
-				if (value.cell.completed.length == 0) {
-					cells.set_inner_probability(-std::numeric_limits<double>::infinity());
-					continue;
-				} else {
-					double inner = compute_inner_probability(value.cell.completed);
-					cells.set_inner_probability(inner);
-				}
+				double inner = compute_inner_probability(&value.cell);
+				cells.set_inner_probability(inner);
 			}
 		}
 	}
 	parse_chart.compute_max_inner_probabilities(sentence.length, G.nonterminals.length);
-printf("[profiler] construct chart for semantic parsing: %lfms.\n", stopwatch.nanoseconds() / 1000000); stopwatch.start();
 
-	if (!parse<true>(G, parse_chart, logical_form, sentence))
+	if (!parse<AllowAmbiguous, true>(G, parse_chart, logical_form, sentence))
 		return false;
-printf("[profiler] semantic parsing: %lfms.\n", stopwatch.nanoseconds() / 1000000); stopwatch.start();
 
 	/* return the best parse */
 	cell_list<MODE_PARSE, Semantics>& root_cells = parse_chart.get_cells(nonterminal, {0, sentence.length});
-	const nonterminal_state<MODE_PARSE, Semantics>* best_parse = root_cells.get_best_parse();
+	const nonterminal_state<MODE_PARSE, Semantics>* best_parse =
+			root_cells.template get_best_parse<AllowAmbiguous>();
 	if (best_parse != NULL) {
 		free(*syntax);
 		*syntax = best_parse->syntax.tree;
@@ -3400,7 +3377,7 @@ bool parse(
 	grammar<Semantics, Distribution>& G,
 	tokenized_sentence<Semantics>& sentence,
 	const string** token_map,
-	unsigned int time_limit)
+	unsigned int time_limit = UINT_MAX)
 {
 	/* first compute upper bounds on the inner probabilities */
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =

@@ -61,11 +61,6 @@ inline bool print(unsigned int id, Stream& out, const character_printer& printer
 	return print(characters[id], out);
 }
 
-template<typename Stream>
-inline bool print_special_string(unsigned int item, Stream& out) {
-	return print("<new token>", out);
-}
-
 void free_sequences(sequence* sequences, unsigned int count = sentence_count) {
 	for (unsigned int i = 0; i < count; i++)
 		free(sequences[i].tokens);

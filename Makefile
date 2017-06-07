@@ -11,6 +11,10 @@ PCFG_INDUCTION_CPP_SRCS=pcfg_induction.cpp
 PCFG_INDUCTION_DBG_OBJS=$(PCFG_INDUCTION_CPP_SRCS:.cpp=.debug.o)
 PCFG_INDUCTION_OBJS=$(PCFG_INDUCTION_CPP_SRCS:.cpp=.release.o)
 
+MATH_INDUCTION_CPP_SRCS=math_induction.cpp
+MATH_INDUCTION_DBG_OBJS=$(MATH_INDUCTION_CPP_SRCS:.cpp=.debug.o)
+MATH_INDUCTION_OBJS=$(MATH_INDUCTION_CPP_SRCS:.cpp=.release.o)
+
 
 #
 # Compile and link options
@@ -39,6 +43,8 @@ override LDFLAGS += $(LIB_PATHS) -fwhole-program
 
 -include $(PCFG_INDUCTION_OBJS:.release.o=.release.d)
 -include $(PCFG_INDUCTION_DBG_OBJS:.debug.o=.debug.d)
+-include $(MATH_INDUCTION_OBJS:.release.o=.release.d)
+-include $(MATH_INDUCTION_DBG_OBJS:.debug.o=.debug.d)
 
 define make_dependencies
 	$(1) $(2) -c $(3).$(4) -o $(3).$(5).o
@@ -80,8 +86,14 @@ pcfg_induction: $(LIBS) $(PCFG_INDUCTION_OBJS)
 pcfg_induction_dbg: $(LIBS) $(PCFG_INDUCTION_DBG_OBJS)
 		$(CPP) -o pcfg_induction_dbg $(CPPFLAGS_DBG) $(LDFLAGS_DBG) $(PCFG_INDUCTION_DBG_OBJS)
 
+math_induction: $(LIBS) $(MATH_INDUCTION_OBJS)
+		$(CPP) -o math_induction $(CPPFLAGS) $(LDFLAGS) $(MATH_INDUCTION_OBJS)
+
+math_induction_dbg: $(LIBS) $(MATH_INDUCTION_DBG_OBJS)
+		$(CPP) -o math_induction_dbg $(CPPFLAGS_DBG) $(LDFLAGS_DBG) $(MATH_INDUCTION_DBG_OBJS)
+
 clean:
-	    ${RM} -f *.o */*.o */*/*.o *.d */*.d */*/*.d pcfg_induction pcfg_induction.exe pcfg_induction_dbg pcfg_induction_dbg.exe $(LIBS)
+	    ${RM} -f *.o */*.o */*/*.o *.d */*.d */*/*.d pcfg_induction pcfg_induction.exe pcfg_induction_dbg pcfg_induction_dbg.exe math_induction math_induction.exe math_induction_dbg math_induction_dbg.exe $(LIBS)
 
 distclean:  clean
 	    ${RM} -f *~
