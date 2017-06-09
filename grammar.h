@@ -1291,23 +1291,22 @@ bool is_parseable(
 		syntax_node<Semantics>& syntax,
 		const Semantics& logical_form,
 		grammar<Semantics, Distribution>& G,
+		Semantics& logical_form_set,
 		NonterminalPrinter& nonterminal_printer,
 		TerminalPrinter& terminal_printer,
-		const string** token_map)
+		const string** token_map,
+		unsigned int nonterminal = 1)
 {
-	Semantics logical_form_set;
-	initialize_any(logical_form_set);
 	auto printers = pair<TerminalPrinter&, NonterminalPrinter&>(terminal_printer, nonterminal_printer);
-	if (!is_parseable<Semantics, Distribution, TerminalPrinter, NonterminalPrinter>(syntax, logical_form, G, logical_form_set, printers, token_map))
+	if (!is_parseable<Semantics, Distribution, TerminalPrinter, NonterminalPrinter>(
+			syntax, logical_form, G, logical_form_set, printers, token_map, nonterminal))
 		return false;
-	if (logical_form != logical_form_set) {
+	if (!equivalent(logical_form, logical_form_set)) {
 		print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);
 		print("  Reference logical form: ", stderr); print(logical_form, stderr, terminal_printer); print('\n', stderr);
 		print("  Parsed logical form:    ", stderr); print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
-		free(logical_form_set);
 		return false;
 	}
-	free(logical_form_set);
 	return true;
 }
 
