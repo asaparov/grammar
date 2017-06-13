@@ -1875,8 +1875,10 @@ inline bool push_nonterminal_iterator(
 			terminal_rule.nonterminals = terminal.tokens;
 			terminal_rule.length = terminal.length;
 			if (!init(new_syntax, terminal_rule)
-			 || !push_iterator(terminal_rule, new_syntax, logical_form_set))
+			 || !push_iterator(terminal_rule, new_syntax, logical_form_set)) {
+				free(new_syntax);
 				return false;
+			}
 			free(new_syntax);
 			return true;
 		};
@@ -2736,9 +2738,14 @@ inline void update_outer_probabilities(
 	std::swap(new_queue, queue);
 }
 
+enum parse_result {
+	PARSE_SUCCESS,
+	PARSE_FAILURE,
+	PARSE_TIME_EXCEEDED
+};
 
 template<bool AllowAmbiguous, bool Quiet, parse_mode Mode, typename Semantics, typename Distribution>
-bool parse(
+parse_result parse(
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const Semantics& logical_form,
@@ -2762,9 +2769,9 @@ bool parse(
 			return expand_nonterminal(queue, G, parse_chart, logical_form_set, 1, cell, sentence, {0, sentence.length});
 		};
 	if (!root_cells.expand_cells(logical_form, expand_cell))
-		return false;
+		return PARSE_FAILURE;
 
-	timer stopwatch;
+	timer stopwatch; parse_result result = PARSE_SUCCESS;
 	double last_priority = std::numeric_limits<double>::infinity();
 	unsigned int completed_derivations = 0;
 	unsigned int best_derivation_index = 0;
@@ -2811,7 +2818,7 @@ debug_priority = log(state.priority);
 #if defined(NDEBUG)
 			if (stopwatch.milliseconds() > time_limit) {
 				if (!Quiet) fprintf(stderr, "%sparse: Reached time limit; terminating search...\n", parser_prefix);
-				break;
+				result = PARSE_TIME_EXCEEDED; break;
 			}
 #endif
 
@@ -2842,7 +2849,7 @@ debug_priority = log(state.priority);
 	/* free the search queue */
 	for (search_state<Mode, Semantics> state : queue)
 		free(state);
-	return true;
+	return result;
 }
 
 template<typename Semantics, typename Distribution>
@@ -2853,7 +2860,7 @@ inline bool sample(
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence)
 {
-	if (!parse<false, true>(G, parse_chart, logical_form, sentence))
+	if (parse<false, true>(G, parse_chart, logical_form, sentence) != PARSE_SUCCESS)
 		return false;
 
 	auto expand_cell = [&](
@@ -3028,7 +3035,7 @@ bool reparse(syntax_node<Semantics>*& syntax,
 	/* first compute upper bounds on the inner probabilities */
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
 			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
-	if (!parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence))
+	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
@@ -3047,14 +3054,14 @@ bool reparse(syntax_node<Semantics>*& syntax,
 	}
 	parse_chart.compute_max_inner_probabilities(sentence.length, G.nonterminals.length);
 
-	if (!parse<AllowAmbiguous, true>(G, parse_chart, logical_form, sentence))
-		return false;
+	parse_result result = parse<AllowAmbiguous, true>(G, parse_chart, logical_form, sentence);
+	if (result == PARSE_FAILURE) return false;
 
 	/* return the best parse */
 	cell_list<MODE_PARSE, Semantics>& root_cells = parse_chart.get_cells(nonterminal, {0, sentence.length});
 	const nonterminal_state<MODE_PARSE, Semantics>* best_parse =
 			root_cells.template get_best_parse<AllowAmbiguous>();
-	if (best_parse != NULL) {
+	if (result == PARSE_SUCCESS && best_parse != NULL) {
 		free(*syntax);
 		*syntax = best_parse->syntax.tree;
 	}
@@ -3382,7 +3389,7 @@ bool parse(
 	/* first compute upper bounds on the inner probabilities */
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
 			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
-	if (!parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence, time_limit))
+	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence, time_limit) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
@@ -3401,14 +3408,15 @@ bool parse(
 	}
 	parse_chart.compute_max_inner_probabilities(sentence.length, G.nonterminals.length);
 
-	if (!parse<AllowAmbiguous, false>(G, parse_chart, logical_form, sentence, time_limit))
+	parse_result result = parse<AllowAmbiguous, false>(G, parse_chart, logical_form, sentence, time_limit);
+	if (result == PARSE_FAILURE)
 		return false;
 
 	/* return the best parse */
 	cell_list<MODE_PARSE, Semantics>& root_cells = parse_chart.get_cells(1, {0, sentence.length});
 	const nonterminal_state<MODE_PARSE, Semantics>* best_parse =
 			root_cells.template get_best_parse<AllowAmbiguous>();
-	if (best_parse == NULL)
+	if (best_parse == NULL || result == PARSE_TIME_EXCEEDED)
 		return false;
 
 	free(logical_form);
