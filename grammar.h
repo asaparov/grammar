@@ -1340,7 +1340,7 @@ struct null_semantics {
 	};
 
 	struct invert_iterator {
-		constexpr null_semantics get_next() {
+		constexpr null_semantics get_next() const {
 			return null_semantics();
 		}
 
@@ -1391,8 +1391,8 @@ inline bool print(const null_semantics::function& function, Stream& out) {
 	}
 }
 
-template<typename Stream, typename... Printer>
-constexpr bool print(const null_semantics& logical_form, Stream& out, Printer&&... printer) {
+template<typename Stream, typename Printer>
+constexpr bool print(const null_semantics& logical_form, Stream& out, Printer& printer) {
 	return true;
 }
 

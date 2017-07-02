@@ -2639,15 +2639,15 @@ struct tree_semantics_trie {
 					linked_list_node<tree_semantics*>* new_stack = stack;
 					tree_semantics*& next = get_next_node(tree, new_stack);
 					if (to_expand)
-						entry.value.map_descendants<Function, EXPAND_DESCENDANTS, false>(next, new_stack, function);
-					else entry.value.map_descendants<Function, Expand, false>(next, new_stack, function);
+						entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(next, new_stack, function);
+					else entry.value.template map_descendants<Function, Expand, false>(next, new_stack, function);
 					tree = old_tree;
 				}
 			} else {
 				tree->label = entry.key;
 				if (to_expand)
-					entry.value.map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
-				else entry.value.map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
+					entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
+				else entry.value.template map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
 			}
 		}
 

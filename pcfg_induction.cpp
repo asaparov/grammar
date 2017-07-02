@@ -174,7 +174,7 @@ int main(int argc, const char** argv)
 			return EXIT_FAILURE;
 	}
 
-	character_printer printer; dummy_scribe nonterminal_printer;
+	character_printer printer; default_scribe nonterminal_printer;
 	unsigned int* order = (unsigned int*) malloc(sizeof(unsigned int) * sentence_count);
 	for (unsigned int i = 0; i < sentence_count; i++)
 		order[i] = i;

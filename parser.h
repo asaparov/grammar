@@ -715,7 +715,7 @@ inline bool init(
 				+ min(log_probability<Mode>(posterior[i].logical_form), cell->prior_probability);
 	}
 	if (state.posterior_length > 1)
-		sort(state.posterior, state.posterior_length, dummy_sorter());
+		sort(state.posterior, state.posterior_length, default_sorter());
 	while (state.posterior_length > 0) {
 		if (!std::isinf(posterior[state.posterior_length - 1].log_probability))
 			break;
@@ -2092,7 +2092,7 @@ bool push_invert_state(
 	}
 
 if (Mode == MODE_PARSE && debug_flag) {
-dummy_scribe scribe;
+default_scribe scribe;
 check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_next(), scribe);
 }
 

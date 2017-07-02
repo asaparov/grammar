@@ -1085,7 +1085,7 @@ const array<weighted_feature_set<double>>* log_conditional(
 	value.posterior.table.keys[index] = observation;
 	value.posterior.values[index] = posterior;
 	value.posterior.table.size++;
-	insertion_sort(*posterior, dummy_sorter());
+	insertion_sort(*posterior, default_sorter());
 	return posterior;
 }
 

@@ -237,7 +237,7 @@ int main(int argc, const char** argv)
 	fprintf(out, "done.\n"); fflush(out);
 
 	character_printer printer;
-	dummy_scribe nonterminal_printer;
+	default_scribe nonterminal_printer;
 	unsigned int* order = (unsigned int*) alloca(sizeof(unsigned int) * sentence_count);
 	for (unsigned int i = 0; i < sentence_count; i++)
 		order[i] = i;
@@ -249,7 +249,7 @@ int main(int argc, const char** argv)
 				print(*syntax[i], out, nonterminal_printer, printer); print("\n\n", out);
 			}
 			printf("(seed = %u)\n", get_seed());
-			auto printers = make_pair<character_printer&, dummy_scribe&>(printer, nonterminal_printer);
+			auto printers = make_pair<character_printer&, default_scribe&>(printer, nonterminal_printer);
 			for (unsigned int i = 0; i < nonterminal_count; i++) {
 				if (G.nonterminals[i].rule_distribution.observations.sum == 0) continue;
 				print(G.nonterminals[i].rule_distribution.type, out); print(' ', out);
