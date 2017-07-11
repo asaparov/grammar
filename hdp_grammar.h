@@ -1089,31 +1089,48 @@ const array<weighted_feature_set<double>>* log_conditional(
 	return posterior;
 }
 
-template<typename Semantics>
+inline const string& map_to_string(const string** map, unsigned int id) {
+	return *map[id];
+}
+
+const string& map_to_string(const hash_map<string, unsigned int>& map, unsigned int id) {
+	fprintf(stderr, "map_to_string ERROR: This function can"
+			" only be called with an integer-to-string map.\n");
+	exit(EXIT_FAILURE);
+}
+
+bool get_token(const string& identifier, unsigned int& id, const string** map) {
+	fprintf(stderr, "get_token ERROR: This function can"
+			" only be called with a string-to-integer map.\n");
+	exit(EXIT_FAILURE);
+}
+
+template<typename Semantics, typename StringMapType>
 inline bool parse_number(const rule<Semantics>& observation,
 		const Semantics& src_logical_form, Semantics& dst_logical_form,
-		const string** token_map)
+		const StringMapType& token_map)
 {
 	int integer;
 	if (!observation.is_terminal() || observation.length != 1
-	 || !parse_int(*token_map[observation.nonterminals[0]], integer)
+	 || !parse_int(map_to_string(token_map, observation.nonterminals[0]), integer)
 	 || !set_number(dst_logical_form, src_logical_form, integer))
 		return false;
 	return true;
 }
 
-template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms, typename RulePrior, typename Semantics>
-inline weighted_logical_form<Semantics>* log_conditional(
+template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
+		typename RulePrior, typename Semantics, typename StringMapType>
+inline weighted<Semantics>* log_conditional(
 	hdp_rule_distribution<RulePrior, Semantics>& distribution,
 	const rule<Semantics>& observation, const Semantics& logical_form,
-	const string** token_map, unsigned int& length)
+	const StringMapType& token_map, unsigned int& length)
 {
 	length = 0;
 	if (distribution.type == PRETERMINAL_NUMBER) {
-		weighted_logical_form<Semantics>* weighted_logical_forms =
-				(weighted_logical_form<Semantics>*) malloc(sizeof(weighted_logical_form<Semantics>) * 1);
+		weighted<Semantics>* weighted_logical_forms =
+				(weighted<Semantics>*) malloc(sizeof(weighted<Semantics>) * 1);
 
-		if (!parse_number(observation, logical_form, weighted_logical_forms[0].logical_form, token_map))
+		if (!parse_number(observation, logical_form, weighted_logical_forms[0].object, token_map))
 			return weighted_logical_forms;
 		weighted_logical_forms[0].log_probability = 0.0;
 		length++; return weighted_logical_forms;
@@ -1123,27 +1140,118 @@ inline weighted_logical_form<Semantics>* log_conditional(
 			log_conditional<DiscardImpossible, PruneAmbiguousLogicalForms>(distribution, observation, logical_form);
 	if (posterior == NULL) return NULL;
 
-	weighted_logical_form<Semantics>* weighted_logical_forms =
-			(weighted_logical_form<Semantics>*) malloc(sizeof(weighted_logical_form<Semantics>) * max((size_t) 1, posterior->length));
+	weighted<Semantics>* weighted_logical_forms =
+			(weighted<Semantics>*) malloc(sizeof(weighted<Semantics>) * max((size_t) 1, posterior->length));
 	if (weighted_logical_forms == NULL) {
 		fprintf(stderr, "log_conditional ERROR: Unable to initialize weighted logical form array.\n");
 		return NULL;
 	}
 	for (unsigned int i = 0; i < posterior->length; i++)
 	{
-		weighted_logical_form<Semantics>& item = weighted_logical_forms[length];
-		item.logical_form = logical_form;
-		if (!set_features(item.logical_form, posterior->data[i],
+		weighted<Semantics>& item = weighted_logical_forms[length];
+		item.object = logical_form;
+		if (!set_features(item.object, posterior->data[i],
 				distribution.feature_sequence, distribution.feature_count))
 		{
 			/* this logical form is impossible, so skip it */
-			core::free(item.logical_form);
+			core::free(item.object);
 			continue;
 		}
 		item.log_probability = posterior->data[i].log_probability;
 		length++;
 	}
 	return weighted_logical_forms;
+}
+
+template<bool PruneUnobservedTerminals, typename RulePrior, typename Semantics, typename StringMapType>
+inline weighted<sequence>* get_terminals(
+	hdp_rule_distribution<RulePrior, Semantics>& distribution, const Semantics& logical_form,
+	StringMapType& token_map, unsigned int& length)
+{
+	length = 0;
+	if (distribution.type == PRETERMINAL_NUMBER) {
+		weighted<sequence>* weighted_terminals =
+				(weighted<sequence>*) malloc(sizeof(weighted<sequence>) * 1);
+		if (weighted_terminals == NULL) {
+			fprintf(stderr, "get_terminals ERROR: Out of memory.\n");
+			return NULL;
+		}
+
+		int number;
+		if (any_number(logical_form)) {
+			if (!PruneUnobservedTerminals) {
+				weighted_terminals[0].log_probability = 0.0;
+				if (!init(weighted_terminals[0].object, 1))
+					weighted_terminals[0].object[0] = NEW_TERMINAL;
+				length++;
+			}
+			return weighted_terminals;
+		} else if (!get_number(logical_form, number)) {
+			return weighted_terminals;
+		}
+
+		weighted_terminals[0].log_probability = 0.0;
+		if (!init(weighted_terminals[0].object, 1)) {
+			free(weighted_terminals);
+			return NULL;
+		}
+
+		int length = snprintf(NULL, 0, "%d", number);
+		string buffer = string(length + 1);
+		buffer.length = length;
+		if (snprintf(buffer.data, length + 1, "%d", number) != length
+		 || !get_token(buffer, weighted_terminals[0].object[0], token_map)) {
+			free(weighted_terminals[0]);
+			free(weighted_terminals);
+			return NULL;
+		}
+
+		length++; return weighted_terminals;
+	}
+
+	typedef typename hdp_rule_distribution<RulePrior, Semantics>::cache_value cache_value;
+
+	feature_set features = feature_set(distribution.feature_count);
+	if (!get_features(features, logical_form, distribution.feature_sequence, distribution.feature_count))
+		return NULL;
+	cache_value& value = get_cache_entry(distribution, features);
+
+	weighted<sequence>* weighted_terminals = (weighted<sequence>*)
+			malloc(sizeof(weighted<sequence>) * (distribution.observations.counts.size + 1));
+	if (weighted_terminals == NULL) {
+		fprintf(stderr, "get_terminals ERROR: Out of memory.\n");
+		return NULL;
+	} else if (value.probabilities.table.size == 0) {
+		return weighted_terminals;
+	}
+
+	for (unsigned int i = 0; i < distribution.observations.counts.size; i++) {
+		const rule<Semantics>& observation = distribution.observations.counts.keys[i];
+		if (!observation.is_terminal()) continue;
+		if (!init(weighted_terminals[length].object, {observation.nonterminals, observation.length})) {
+			for (unsigned int j = 0; j < length; j++)
+				free(weighted_terminals[j]);
+			free(weighted_terminals);
+			return NULL;
+		}
+		weighted_terminals[length].log_probability = 0.0;
+		length++;
+	}
+
+	for (const auto& entry : value.probabilities) {
+		unsigned int index = 0;
+		for (unsigned int i = 0; i < distribution.observations.counts.size; i++) {
+			const rule<Semantics>& observation = distribution.observations.counts.keys[i];
+			if (!observation.is_terminal()) continue;
+			weighted_terminals[index].log_probability =
+					max(weighted_terminals[index].log_probability, entry.value[i]);
+			index++;
+		}
+	}
+
+	for (unsigned int i = 0; i < length; i++)
+		weighted_terminals[i].log_probability = log(weighted_terminals[i].log_probability);
+	return weighted_terminals;
 }
 
 template<typename RulePrior, typename Semantics>
@@ -1343,11 +1451,11 @@ bool get_rules(hdp_rule_distribution<rule_list_prior<NonterminalPrior, TerminalP
 }
 
 
-template<typename RulePrior, typename Semantics>
+template<typename RulePrior, typename Semantics, typename StringMapType>
 double max_log_conditional(
 	hdp_rule_distribution<RulePrior, Semantics>& distribution,
 	const rule<Semantics>& observation, const Semantics& logical_form,
-	const string** token_map)
+	const StringMapType& token_map)
 {
 	typedef typename hdp_rule_distribution<RulePrior, Semantics>::cache_value cache_value;
 
@@ -1469,11 +1577,11 @@ bool read(
 template<typename RulePrior, typename Semantics, typename Stream, typename... Args>
 bool write(const hdp_grammar<RulePrior, Semantics>& G,
 	const syntax_node<Semantics>* const* syntax,
-	unsigned int train_sentence_count, Stream& stream, Args&&... scribes)
+	unsigned int sentence_count, Stream& stream, Args&&... scribes)
 {
 	if (!write_random_state(stream) || !write(G, stream, std::forward<Args>(scribes)...))
 		return false;
-	for (unsigned int i = 0; i < train_sentence_count; i++)
+	for (unsigned int i = 0; i < sentence_count; i++)
 		if (!write(*syntax[i], stream, std::forward<Args>(scribes)...)) return false;
 	return true;
 }

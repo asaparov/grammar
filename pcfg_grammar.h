@@ -165,7 +165,7 @@ array<weighted_feature_set<double>>* log_conditional(
 }
 
 template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms, typename BaseDistribution, typename Likelihood>
-inline weighted_logical_form<null_semantics>* log_conditional(
+inline weighted<null_semantics>* log_conditional(
 	conjugate_pair<BaseDistribution, Likelihood>& distribution,
 	const rule<null_semantics>& observation, const null_semantics& logical_form,
 	const string** token_map, unsigned int& length)
@@ -175,15 +175,15 @@ inline weighted_logical_form<null_semantics>* log_conditional(
 			log_conditional<DiscardImpossible, PruneAmbiguousLogicalForms>(distribution, observation, logical_form);
 	if (posterior == NULL) return NULL;
 
-	weighted_logical_form<null_semantics>* weighted_logical_forms = (weighted_logical_form<null_semantics>*)
-			malloc(sizeof(weighted_logical_form<null_semantics>) * max((size_t) 1, posterior->length));
+	weighted<null_semantics>* weighted_logical_forms = (weighted<null_semantics>*)
+			malloc(sizeof(weighted<null_semantics>) * max((size_t) 1, posterior->length));
 	if (weighted_logical_forms == NULL) {
 		fprintf(stderr, "log_conditional ERROR: Unable to initialize weighted logical form array.\n");
 		return NULL;
 	}
 	for (unsigned int i = 0; i < posterior->length; i++)
 	{
-		weighted_logical_form<null_semantics>& item = weighted_logical_forms[length];
+		weighted<null_semantics>& item = weighted_logical_forms[length];
 		item.log_probability = posterior->data[i].log_probability;
 		length++;
 	}

@@ -17,7 +17,7 @@
 #include <math/features.h>
 
 #define ALL_EXCEPT UINT_MAX
-#define UNION (UINT_MAX - 3)
+#define NEW_TERMINAL (UINT_MAX - 3)
 
 using namespace core;
 
@@ -58,6 +58,11 @@ struct sequence {
 
 	static inline bool copy(const sequence& src, sequence& dst) {
 		return dst.initialize(src);
+	}
+
+	static inline void swap(sequence& first, sequence& second) {
+		core::swap(first.tokens, second.tokens);
+		core::swap(first.length, second.length);
 	}
 
 	static inline void free(sequence& seq) {
@@ -128,30 +133,30 @@ inline bool print(const sequence& item,
 	return success;
 }
 
-template<typename Semantics>
-struct weighted_logical_form {
-	Semantics logical_form;
+template<typename T>
+struct weighted {
+	T object;
 	double log_probability;
 
-	static inline void swap(weighted_logical_form<Semantics>& first, weighted_logical_form<Semantics>& second) {
-		core::swap(first.logical_form, second.logical_form);
+	static inline void swap(weighted<T>& first, weighted<T>& second) {
+		core::swap(first.object, second.object);
 		core::swap(first.log_probability, second.log_probability);
 	}
 
-	static inline void move(const weighted_logical_form<Semantics>& src, weighted_logical_form<Semantics>& dst) {
-		core::move(src.logical_form, dst.logical_form);
+	static inline void move(const weighted<T>& src, weighted<T>& dst) {
+		core::move(src.object, dst.object);
 		dst.log_probability = src.log_probability;
 	}
 
-	static inline void free(weighted_logical_form<Semantics>& form) {
-		core::free(form.logical_form);
+	static inline void free(weighted<T>& form) {
+		core::free(form.object);
 	}
 };
 
-template<typename Semantics>
+template<typename T>
 inline bool operator < (
-		const weighted_logical_form<Semantics>& first,
-		const weighted_logical_form<Semantics>& second)
+		const weighted<T>& first,
+		const weighted<T>& second)
 {
 	/* we want to sort in descending order */
 	return first.log_probability > second.log_probability;
@@ -425,9 +430,14 @@ bool write(const rule<Semantics>& r, Stream& stream, const string** token_map)
 
 /* forward declarations */
 
-template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms, typename RuleDistribution, typename Semantics>
-weighted_logical_form<Semantics>* log_conditional(RuleDistribution&,
-		const rule<Semantics>&, const Semantics&, const string** token_map, unsigned int&);
+template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
+		typename RuleDistribution, typename Semantics, typename StringMapType>
+weighted<Semantics>* log_conditional(RuleDistribution&,
+		const rule<Semantics>&, const Semantics&, const StringMapType& token_map, unsigned int&);
+
+template<bool PruneUnobservedTerminals, typename RuleDistribution, typename Semantics, typename StringMapType>
+weighted<sequence>* get_terminals(RuleDistribution&,
+		const Semantics&, StringMapType&, unsigned int&);
 
 
 /* TODO: i think it would be better if we didn't make a
@@ -958,31 +968,48 @@ bool write(const syntax_node<Semantics>& node, Stream& stream, RuleWriter& write
 	return true;
 }
 
-template<typename Semantics>
-bool yield(const syntax_node<Semantics>& node,
+template<typename Semantics, typename Distribution>
+inline bool yield(const rule<Semantics>& terminal,
+		const Distribution& rule_distribution, const Semantics& logical_form,
 		unsigned int*& sentence, unsigned int& length, unsigned int& capacity)
 {
+	if (!ensure_capacity(sentence, capacity, length + terminal.length))
+		return false;
+	memcpy(sentence + length, terminal.nonterminals, sizeof(unsigned int) * terminal.length);
+	length += terminal.length;
+	return true;
+}
+
+template<typename Semantics, typename Distribution, typename... OutputType>
+bool yield(const grammar<Semantics, Distribution>& G,
+		const syntax_node<Semantics>& node, unsigned int nonterminal,
+		const Semantics& logical_form, OutputType&&... output)
+{
 	if (node.is_terminal()) {
-		if (!ensure_capacity(sentence, capacity, length + node.right.length))
-			return false;
-		memcpy(sentence + length, node.right.nonterminals, sizeof(unsigned int) * node.right.length);
-		length += node.right.length;
-		return true;
+		return yield(node.right,
+				G.nonterminals[nonterminal - 1].rule_distribution,
+				logical_form, std::forward<OutputType>(output)...);
 	}
 
 	for (unsigned int i = 0; i < node.right.length; i++) {
-		if (!yield(*node.children[i], sentence, length, capacity))
+		Semantics transformed;
+		if (!apply(node.right.functions[i], logical_form, transformed))
+			return false;
+		if (!yield(G, *node.children[i], node.right.nonterminals[i], transformed, std::forward<OutputType>(output)...))
 			return false;
 	}
 	return true;
 }
 
-template<typename Semantics>
-bool yield(const syntax_node<Semantics>& node, sequence& sentence)
+template<typename Semantics, typename Distribution>
+bool yield(const grammar<Semantics, Distribution>& G,
+		const syntax_node<Semantics>& node,
+		const Semantics& logical_form, sequence& sentence,
+		unsigned int nonterminal = 1)
 {
 	unsigned int capacity = 16; sentence.length = 0;
 	sentence.tokens = (unsigned int*) malloc(sizeof(unsigned int) * 16);
-	if (sentence.tokens == NULL || !yield(node, sentence.tokens, sentence.length, capacity)) {
+	if (sentence.tokens == NULL || !yield(G, node, nonterminal, logical_form, sentence.tokens, sentence.length, capacity)) {
 		fprintf(stderr, "yield ERROR: Unable to compute yield of derivation.\n");
 		return false;
 	}

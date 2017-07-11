@@ -359,8 +359,9 @@ struct morphology
 	hash_map<token, fixed_array<unsigned int>> root_to_word_map;
 
 	fixed_array<unsigned int> auxiliaries;
+	fixed_array<unsigned int> auxiliary_roots;
 
-	morphology() : word_to_root_map(1 << 18), root_to_word_map(1 << 19), auxiliaries(8) { }
+	morphology() : word_to_root_map(1 << 18), root_to_word_map(1 << 19), auxiliaries(8), auxiliary_roots(8) { }
 
 	~morphology() {
 		for (auto entry : word_to_root_map)
@@ -395,20 +396,29 @@ struct morphology
 		 || !add_token(wist,	{wit, NUMBER_ANY,		INFLECTION_PAST_PARTICIPLE}))
 			return false;
 
-		if (!auxiliaries.ensure_capacity(6)) return false;
-		auxiliaries.elements[0] = is;
-		auxiliaries.elements[1] = are;
-		auxiliaries.elements[2] = was;
-		auxiliaries.elements[3] = were;
-		auxiliaries.elements[4] = being;
-		auxiliaries.elements[5] = been;
-		auxiliaries.length = 6;
+		if (!auxiliaries.ensure_capacity(7)
+		 || !auxiliary_roots.ensure_capacity(1)) return false;
+		auxiliaries.elements[0] = be;
+		auxiliaries.elements[1] = is;
+		auxiliaries.elements[2] = are;
+		auxiliaries.elements[3] = was;
+		auxiliaries.elements[4] = were;
+		auxiliaries.elements[5] = being;
+		auxiliaries.elements[6] = been;
+		auxiliaries.length = 7;
+		auxiliary_roots.elements[0] = be;
+		auxiliary_roots.length = 1;
 		insertion_sort(auxiliaries.elements, auxiliaries.length);
+		insertion_sort(auxiliary_roots.elements, auxiliary_roots.length);
 		return true;
 	}
 
 	inline bool is_auxiliary_verb(unsigned int word) const {
 		return auxiliaries.contains(word);
+	}
+
+	inline bool is_auxiliary_root(unsigned int root) const {
+		return auxiliary_roots.contains(root);
 	}
 
 	const fixed_array<token>& parse(unsigned int word) const {
