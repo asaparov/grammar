@@ -8,6 +8,7 @@ aggression
 aid
 air
 alcohol
+amber
 anger
 applause
 arithmetic
@@ -40,6 +41,7 @@ commerce
 compassion
 comprehension
 content
+coral
 corruption
 cotton
 courage

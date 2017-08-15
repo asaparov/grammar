@@ -21,118 +21,6 @@
 
 using namespace core;
 
-struct sequence {
-	unsigned int* tokens;
-	unsigned int length;
-
-	sequence(unsigned int* src, unsigned int length) : tokens(src), length(length) { }
-
-	inline bool operator = (const sequence& src) {
-		return initialize(src);
-	}
-
-	inline unsigned int& operator [] (unsigned int index) {
-		return tokens[index];
-	}
-
-	inline unsigned int operator [] (unsigned int index) const {
-		return tokens[index];
-	}
-
-	static inline unsigned int hash(const sequence& key) {
-		return default_hash(key.tokens, key.length);
-	}
-
-	static inline bool is_empty(const sequence& key) {
-		return key.tokens == NULL;
-	}
-
-	static inline void set_empty(sequence& key) {
-		key.tokens = NULL;
-	}
-
-	static inline void move(const sequence& src, sequence& dst) {
-		dst.tokens = src.tokens;
-		dst.length = src.length;
-	}
-
-	static inline bool copy(const sequence& src, sequence& dst) {
-		return dst.initialize(src);
-	}
-
-	static inline void swap(sequence& first, sequence& second) {
-		core::swap(first.tokens, second.tokens);
-		core::swap(first.length, second.length);
-	}
-
-	static inline void free(sequence& seq) {
-		core::free(seq.tokens);
-	}
-
-private:
-	inline bool initialize(const sequence& src) {
-		length = src.length;
-		tokens = (unsigned int*) malloc(sizeof(unsigned int) * length);
-		if (tokens == NULL) {
-			fprintf(stderr, "sequence.initialize ERROR: Out of memory.\n");
-			return false;
-		}
-		memcpy(tokens, src.tokens, sizeof(unsigned int) * length);
-		return true;
-	}
-};
-
-inline bool init(sequence& seq, unsigned int length) {
-	seq.length = length;
-	seq.tokens = (unsigned int*) malloc(sizeof(unsigned int) * length);
-	if (seq.tokens == NULL) {
-		fprintf(stderr, "init ERROR: Insufficient memory for token array in sequence.\n");
-		return false;
-	}
-	return true;
-}
-
-inline bool init(sequence& seq, const sequence& src) {
-	return sequence::copy(src, seq);
-}
-
-inline bool operator == (const sequence& first, const sequence& second) {
-	/* only the first argument can be uninitialized */
-	if (first.tokens == NULL) return false;
-	if (first.length != second.length) return false;
-	for (unsigned int i = 0; i < first.length; i++)
-		if (first.tokens[i] != second.tokens[i]) return false;
-	return true;
-}
-
-template<typename Stream>
-inline bool read(sequence& item, Stream& in) {
-	if (!read(item.length, in)) return false;
-	item.tokens = (unsigned int*) malloc(sizeof(unsigned int) * item.length);
-	if (item.tokens == NULL) return false;
-	if (!read(item.tokens, in, item.length)) {
-		free(item.tokens);
-		return false;
-	}
-	return true;
-}
-
-template<typename Stream>
-inline bool write(const sequence& item, Stream& out) {
-	return write(item.length, out) && write(item.tokens, out, item.length);
-}
-
-template<typename Stream, typename Printer>
-inline bool print(const sequence& item,
-	Stream& out, Printer& printer)
-{
-	if (item.length == 0) return true;
-	bool success = print(item[0], out, printer);
-	for (unsigned int i = 1; i < item.length; i++)
-		success &= print(' ', out) && print(item[i], out, printer);
-	return success;
-}
-
 template<typename T>
 struct weighted {
 	T object;
@@ -730,6 +618,26 @@ struct syntax_node {
 		return true;
 	}
 
+	static inline void move(const syntax_node<Semantics>& src, syntax_node<Semantics>& dst) {
+		core::move(src.right, dst.right);
+		core::move(src.children, dst.children);
+		dst.reference_count = src.reference_count;
+	}
+
+	static inline bool is_empty(const syntax_node<Semantics>& key) {
+		return key.reference_count == 0;
+	}
+
+	static inline unsigned int hash(const syntax_node<Semantics>& key) {
+		unsigned int hash_value = rule<Semantics>::hash(key.right);
+		if (key.is_terminal()) return hash_value;
+		for (unsigned int i = 0; i < key.right.length; i++) {
+			if (key.children[i] != NULL)
+				hash_value ^= hash(*key.children[i]);
+		}
+		return hash_value;
+	}
+
 	static inline void free(syntax_node<Semantics>& node) {
 		node.free();
 		if (node.reference_count == 0)
@@ -980,10 +888,11 @@ inline bool yield(const rule<Semantics>& terminal,
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename... OutputType>
+template<typename Semantics, typename Distribution, typename Printer, typename... OutputType>
 bool yield(const grammar<Semantics, Distribution>& G,
-		const syntax_node<Semantics>& node, unsigned int nonterminal,
-		const Semantics& logical_form, OutputType&&... output)
+		const syntax_node<Semantics>& node,
+		unsigned int nonterminal, const Semantics& logical_form,
+		Printer& printer, OutputType&&... output)
 {
 	if (node.is_terminal()) {
 		return yield(node.right,
@@ -993,23 +902,26 @@ bool yield(const grammar<Semantics, Distribution>& G,
 
 	for (unsigned int i = 0; i < node.right.length; i++) {
 		Semantics transformed;
-		if (!apply(node.right.functions[i], logical_form, transformed))
-			return false;
-		if (!yield(G, *node.children[i], node.right.nonterminals[i], transformed, std::forward<OutputType>(output)...))
+		if (!apply(node.right.functions[i], logical_form, transformed)) {
+			print("yield ERROR: Unable to apply semantic transformation '", stderr);
+			print(node.right.functions[i], stderr); print("' to logical form:\n", stderr);
+			print(logical_form, stderr, printer); print('\n', stderr); return false;
+		}
+		if (!yield(G, *node.children[i], node.right.nonterminals[i], transformed, printer, std::forward<OutputType>(output)...))
 			return false;
 	}
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Printer>
 bool yield(const grammar<Semantics, Distribution>& G,
 		const syntax_node<Semantics>& node,
 		const Semantics& logical_form, sequence& sentence,
-		unsigned int nonterminal = 1)
+		Printer& printer, unsigned int nonterminal = 1)
 {
 	unsigned int capacity = 16; sentence.length = 0;
 	sentence.tokens = (unsigned int*) malloc(sizeof(unsigned int) * 16);
-	if (sentence.tokens == NULL || !yield(G, node, nonterminal, logical_form, sentence.tokens, sentence.length, capacity)) {
+	if (sentence.tokens == NULL || !yield(G, node, nonterminal, logical_form, printer, sentence.tokens, sentence.length, capacity)) {
 		fprintf(stderr, "yield ERROR: Unable to compute yield of derivation.\n");
 		return false;
 	}
@@ -1017,26 +929,45 @@ bool yield(const grammar<Semantics, Distribution>& G,
 }
 
 template<typename Semantics, typename Distribution>
+inline bool yield(const grammar<Semantics, Distribution>& G,
+		const syntax_node<Semantics>& node, const Semantics& logical_form,
+		sequence& sentence, unsigned int nonterminal = 1)
+{
+	default_scribe printer;
+	return yield(G, node, logical_form, sentence, printer, nonterminal);
+}
+
+template<typename Semantics, typename Distribution, typename StringMapType>
 inline double log_probability(
 	grammar<Semantics, Distribution>& G,
 	const rule<Semantics>& observation,
 	const Semantics& logical_form,
+	const StringMapType& token_map,
 	unsigned int nonterminal_id)
 {
-	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
-	const array<weighted_feature_set<double>>* posterior = log_conditional<false, false>(N.rule_distribution, observation, logical_form);
-	return posterior->data[0].log_probability;
+	unsigned int length;
+	weighted<Semantics>* posterior = log_conditional<false, false>(
+			G.nonterminals[nonterminal_id - 1].rule_distribution,
+			observation, logical_form, token_map, length);
+	if (length == 0)
+		return -std::numeric_limits<double>::infinity();
+	double weight = posterior[0].log_probability;
+	for (unsigned int i = 0; i < length; i++)
+		free(posterior[i]);
+	free(posterior);
+	return weight;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool log_probability(double& score,
 	grammar<Semantics, Distribution>& G,
 	const syntax_node<Semantics>& syntax,
 	const Semantics& logical_form,
+	const StringMapType& token_map,
 	unsigned int nonterminal_id)
 {
 	const rule<Semantics>& r = syntax.right;
-	double rule_score = log_probability(G, r, logical_form, nonterminal_id);
+	double rule_score = log_probability(G, r, logical_form, token_map, nonterminal_id);
 extern bool debug2;
 if (debug2) {
 print(G.nonterminals[nonterminal_id - 1].name, stderr); fprintf(stderr, "\t%lf\n", rule_score);
@@ -1049,63 +980,67 @@ print(G.nonterminals[nonterminal_id - 1].name, stderr); fprintf(stderr, "\t%lf\n
 		if (syntax.children[i] == NULL) continue;
 		if (!apply(r.functions[i], logical_form, transformed))
 			return false;
-		else if (!log_probability(score, G, *syntax.children[i], transformed, r.nonterminals[i]))
+		else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nonterminals[i]))
 			return false;
 	}
 	return true;
 }
 
 /* Computes the log probability of a given parse using the given grammar. */
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 double log_probability(
 	grammar<Semantics, Distribution>& G,
 	const syntax_node<Semantics>& syntax,
 	const Semantics& logical_form,
+	const StringMapType& token_map,
 	unsigned int nonterminal_id = 1)
 {
 	double score = 0.0;
-	if (!log_probability(score, G, syntax, logical_form, nonterminal_id))
+	if (!log_probability(score, G, syntax, logical_form, token_map, nonterminal_id))
 		return -std::numeric_limits<double>::infinity();
 	return score;
 }
 
 /* Computes the log joint probability of the grammar and given derivations */
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 double log_probability(
 	grammar<Semantics, Distribution>& G,
 	const syntax_node<Semantics>* const* syntax,
 	const Semantics* logical_forms,
-	unsigned int sentence_count)
+	unsigned int sentence_count,
+	const StringMapType& token_map)
 {
 	double score = 0.0;
 	for (unsigned int i = 0; i < G.nonterminals.length; i++)
 		score += log_probability(G.nonterminals[i].rule_distribution);
 	for (unsigned int i = 0; i < sentence_count; i++)
-		score += log_probability(G, *syntax[i], logical_forms[i]);
+		score += log_probability(G, *syntax[i], logical_forms[i], token_map);
 	return score;
 }
 
 /* Computes the log joint probability of the grammar and given derivations */
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 double log_probability(
 	grammar<Semantics, Distribution>& G,
 	const syntax_node<Semantics>* const* syntax,
 	const Semantics* const* logical_forms,
-	unsigned int sentence_count)
+	unsigned int sentence_count,
+	const StringMapType& token_map)
 {
 	double score = 0.0;
 	for (unsigned int i = 0; i < G.nonterminals.length; i++)
 		score += log_probability(G.nonterminals[i].rule_distribution);
 	for (unsigned int i = 0; i < sentence_count; i++)
-		score += log_probability(G, *syntax[i], *logical_forms[i]);
+		score += log_probability(G, *syntax[i], *logical_forms[i], token_map);
 	return score;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Printer>
 bool add_tree(unsigned int nonterminal_id,
 	const syntax_node<Semantics>& syntax,
 	const Semantics& logical_form,
-	grammar<Semantics, Distribution>& G)
+	grammar<Semantics, Distribution>& G,
+	Printer& printer)
 {
 	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
 
@@ -1118,11 +1053,24 @@ bool add_tree(unsigned int nonterminal_id,
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.functions[i], logical_form, transformed)
-		 || !add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G))
+		if (!apply(syntax.right.functions[i], logical_form, transformed)) {
+			print("add_tree ERROR: Unable to apply semantic transformation function '", stderr);
+			print(syntax.right.functions[i], stderr); print("' to the logical form:\n", stderr);
+			print(logical_form, stderr, printer); print('\n', stderr); return false;
+		} if (!add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, printer))
 			return false;
 	}
 	return true;
+}
+
+template<typename Semantics, typename Distribution>
+inline bool add_tree(unsigned int nonterminal_id,
+	const syntax_node<Semantics>& syntax,
+	const Semantics& logical_form,
+	grammar<Semantics, Distribution>& G)
+{
+	default_scribe printer;
+	return add_tree(nonterminal_id, syntax, logical_form, G, printer);
 }
 
 template<typename Semantics, typename Distribution>
@@ -1149,17 +1097,18 @@ bool remove_tree(unsigned int nonterminal_id,
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool add_tree(unsigned int nonterminal_id,
 	const syntax_node<Semantics>& syntax,
 	const Semantics& logical_form,
 	grammar<Semantics, Distribution>& G,
+	const StringMapType& token_map,
 	double& score)
 {
 	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
 
 	N.clear();
-	score += log_probability(G, syntax.right, logical_form, nonterminal_id);
+	score += log_probability(G, syntax.right, logical_form, token_map, nonterminal_id);
 	N.clear();
 	if (!add(N.rule_distribution, syntax.right, logical_form))
 		return false;
@@ -1170,17 +1119,18 @@ bool add_tree(unsigned int nonterminal_id,
 
 		Semantics transformed;
 		if (!apply(syntax.right.functions[i], logical_form, transformed)
-		 || !add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, score))
+		 || !add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool remove_tree(unsigned int nonterminal_id,
 	const syntax_node<Semantics>& syntax,
 	const Semantics& logical_form,
 	grammar<Semantics, Distribution>& G,
+	const StringMapType& token_map,
 	double& score)
 {
 	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
@@ -1188,7 +1138,7 @@ bool remove_tree(unsigned int nonterminal_id,
 	if (!remove(N.rule_distribution, syntax.right, logical_form))
 		return false;
 	N.clear();
-	score += log_probability(G, syntax.right, logical_form, nonterminal_id);
+	score += log_probability(G, syntax.right, logical_form, token_map, nonterminal_id);
 	N.clear();
 
 	if (syntax.is_terminal()) return true;
@@ -1197,7 +1147,7 @@ bool remove_tree(unsigned int nonterminal_id,
 
 		Semantics transformed;
 		if (!apply(syntax.right.functions[i], logical_form, transformed)
-		 || !remove_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, score))
+		 || !remove_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
 	return true;
@@ -1262,7 +1212,7 @@ bool is_parseable(
 		grammar<Semantics, Distribution>& G,
 		Semantics& logical_form_set,
 		pair<TerminalPrinter&, NonterminalPrinter&>& printers,
-		const string** token_map,
+		const string** token_map, double& prior,
 		unsigned int nonterminal = 1)
 {
 	/* TODO: make the error messages more informative */
@@ -1282,7 +1232,17 @@ bool is_parseable(
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				free(child_logical_form_set);
 				return false;
-			} else if (!is_parseable(*syntax.children[i], child_logical_form, G, child_logical_form_set, printers, token_map, syntax.right.nonterminals[i])) {
+			}
+
+			double child_prior = log_probability<false>(child_logical_form_set);
+			if (child_prior == -std::numeric_limits<double>::infinity()) {
+				print("is_parseable ERROR: The prior is -inf after applying semantic transformation function '", stderr);
+				print(syntax.right.functions[i], stderr); print("' to logical form set ", stderr);
+				print(logical_form_set, stderr, printers.key); print(" to obtain logical form set ", stderr);
+				print(child_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				return false;
+			} else if (!is_parseable(*syntax.children[i], child_logical_form, G, child_logical_form_set, printers, token_map, child_prior, syntax.right.nonterminals[i])) {
 				free(child_logical_form_set);
 				free(child_logical_form);
 				return false;
@@ -1305,11 +1265,33 @@ bool is_parseable(
 			free(logical_form_set);
 			logical_form_set = *inverter.inverse;
 			free(inverter);
+
+			double new_prior = log_probability<false>(logical_form_set);
+			if (new_prior > prior || new_prior > child_prior || new_prior == -std::numeric_limits<double>::infinity()) {
+				print("is_parseable ERROR: The prior is not monotonic after inverting semantic transformation function '", stderr);
+				print(syntax.right.functions[i], stderr); print("' to obtain logical form set ", stderr);
+				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				return false;
+			}
+			prior = new_prior;
 		}
 	}
 
-	return is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
-			syntax, logical_form, logical_form_set, printers, token_map);
+	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
+			syntax, logical_form, logical_form_set, printers, token_map))
+		return false;
+
+	double new_prior = log_probability<false>(logical_form_set);
+	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
+		print("is_parseable ERROR: The prior is not monotonic after checking "
+				"parseability with the rule distribution to obtain logical form set ", stderr);
+		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+		print(syntax.right, stderr, printers); print('\n', stderr);
+		return false;
+	}
+	prior = new_prior;
+	return true;
 }
 
 template<typename Semantics, typename Distribution,
@@ -1324,9 +1306,23 @@ bool is_parseable(
 		const string** token_map,
 		unsigned int nonterminal = 1)
 {
+	double prior = log_probability<false>(logical_form_set);
+	if (prior == -std::numeric_limits<double>::infinity()) {
+		fprintf(stderr, "is_parseable ERROR: The prior of the root logical form set is -inf: ");
+		print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
+		return false;
+	}
+
+	double true_prior = log_probability<true>(logical_form);
+	if (true_prior == -std::numeric_limits<double>::infinity()) {
+		fprintf(stderr, "is_parseable ERROR: The prior of the ground truth logical form is -inf: ");
+		print(logical_form, stderr, terminal_printer); print('\n', stderr);
+		return false;
+	}
+
 	auto printers = pair<TerminalPrinter&, NonterminalPrinter&>(terminal_printer, nonterminal_printer);
 	if (!is_parseable<Semantics, Distribution, TerminalPrinter, NonterminalPrinter>(
-			syntax, logical_form, G, logical_form_set, printers, token_map, nonterminal))
+			syntax, logical_form, G, logical_form_set, printers, token_map, prior, nonterminal))
 		return false;
 	if (!equivalent(logical_form, logical_form_set)) {
 		print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);

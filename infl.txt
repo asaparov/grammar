@@ -15476,6 +15476,7 @@ alveole N?: alveoles
 alveolitis N: alveolitises?, alveolitides<? 1, alveolitisses<? 1, alveolites~? 1
 alveolus N: alveoli
 alvine A: alviner? | alvinest?
+always A: alwayser? | alwaysest?
 alway N?: always
 alycompaine N?: alycompaines
 alyssum N: alyssums
@@ -21669,7 +21670,6 @@ blabbermouth N: blabbermouths
 blabbing N?: blabbings
 blabby A: blabbier? | blabbiest?
 black A: blacker | blackest
-black N: blacks
 black V: blacked | blacking | blacks
 blackamoor N: blackamoors
 blackball N: blackballs
@@ -22150,7 +22150,6 @@ bludgeon V: bludgeoned | bludgeoning | bludgeons
 bludgeoner N?: bludgeoners
 bludger N?: bludgers
 blue A: bluer | bluest
-blue N: blues
 blue V: blued | bluing, blueing 1 | blues
 blueback N?: bluebacks
 blueball N?: blueballs
@@ -50086,7 +50085,6 @@ gravity N: gravities
 gravure N: gravures
 gravy N: gravies
 gray A: grayer | grayest
-gray N: grays
 gray V: grayed | graying | grays
 grayback N: graybacks
 graybeard N: graybeards
@@ -50137,7 +50135,6 @@ greediness N: greedinesses
 greedy A: greedier | greediest
 greegree N: greegrees
 green A: greener | greenest
-green N: greens
 green V: greened | greening | greens
 greenback N: greenbacks
 greenbacker N?: greenbackers
@@ -53110,7 +53107,6 @@ hirsutism N: hirsutisms
 hirudin N?: hirudins
 hirudinean N: hirudineans
 his N: hisses, hes~ 1
-his V?: hissed | hissing | hisses
 hispanicise V?: hispanicised | hispanicising | hispanicises
 hispanicism N?: hispanicisms
 hispanicize V?: hispanicized | hispanicizing | hispanicizes
@@ -54896,7 +54892,6 @@ hysteric N: hysterics
 hysterocatalepsy N: hysterocatalepsies?, hysterocatalepsyes<? 1, hysterocatalepsys<? 1
 hysterotomy N?: hysterotomies
 hythe N?: hythes
-i A: ier? | iest?
 iamb N: iambs
 iambic A: iambicer?, iambiccer<? 1 | iambicest?, iambiccest<? 1
 iambic N: iambics
@@ -55015,6 +55010,7 @@ ideate V: ideated | ideating | ideates
 ideation N: ideations
 idem N: idems?
 idempotent N?: idempotents
+identical A: identicaler? | identicalest?
 identicalness N: identicalnesses
 identification N: identifications
 identifier N?: identifiers
@@ -55785,6 +55781,7 @@ inboard N: inboards
 inborn A: inborner? | inbornest?
 inbound A: inbounder? | inboundest?
 inbound V?: inbounded | inbounding | inbounds
+inbox N: inboxes
 inbreak N?: inbreaks
 inbreathe V?: inbreathed | inbreathing | inbreathes
 inbred N?: inbreds
@@ -72407,6 +72404,7 @@ origami N: origamis
 origan N?: origans
 origanum N: origanums
 origin N: origins
+original A: originaler? | originalest?
 original N: originals
 originalism N: originalisms
 originalist N?: originalists
@@ -84573,7 +84571,6 @@ recycle V: recycled | recycling | recycles
 recycler N?: recyclers
 recycling N: recyclings
 red A: redder | reddest
-red N: reds, redes!< 1
 red V: red, redded 2 | redding, reding!< 1 | reds, redes!< 1
 redact V: redacted | redacting | redacts
 redaction N: redactions
@@ -107535,7 +107532,6 @@ urubu N?: urubus
 urus N: uruses
 urushiol N?: urushiols
 urva N?: urvas
-us N: uses, i~ 1
 usability N: usabilities
 usable A: usabler? | usablest?
 usableness N: usablenesses
@@ -110501,7 +110497,6 @@ whit A?: whitter, whiter!< 1 | whitest!
 whit N: whits
 whit V?: whited! | whiting! | whits
 white A: whiter | whitest
-white N: whites
 white V: whited | whiting | whites
 whitebait N: whitebaits
 whitebeam N?: whitebeams
@@ -111911,7 +111906,6 @@ yeller N: yellers
 yelling N: yellings
 yelloch V?: yelloched | yelloching | yellochs
 yellow A: yellower | yellowest
-yellow N: yellows
 yellow V: yellowed | yellowing | yellows
 yellowback N?: yellowbacks
 yellowbelly N?: yellowbellies

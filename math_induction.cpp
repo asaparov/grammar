@@ -164,7 +164,7 @@ double left_alpha[] = { 1.0e1, 1.0e-4 };
 double right_alpha[] = { 1.0e1, 1.0e0, 1.0e-4 };
 tree_semantics_prior prior(200, left_alpha, right_alpha);
 
-template<parse_mode Mode, bool Complete = false>
+template<bool Complete>
 inline double log_probability(const tree_semantics& logical_form) {
 	return 0.0; //prior.log_probability(logical_form);
 }
@@ -318,8 +318,8 @@ int main(int argc, const char** argv)
 							log_probability(G, parsed_syntax, pruned_logical_form),
 							log_probability(G, *syntax[sentence_id], logical_forms[sentence_id]));
 					printf("Parse prior probability: %lf (true derivation has prior probability %lf)\n",
-							log_probability<MODE_PARSE>(pruned_logical_form),
-							log_probability<MODE_PARSE>(logical_forms[sentence_id]));
+							log_probability<true>(pruned_logical_form),
+							log_probability<true>(logical_forms[sentence_id]));
 					print('\n', out);
 					free(pruned_logical_form); free(logical_form); free(parsed_syntax);
 				}

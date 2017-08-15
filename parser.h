@@ -39,7 +39,7 @@ thread_local double minimum_priority = 0.0;
 //#define USE_BEAM_SEARCH /* comment this to disable beam search (only affects parsing) */
 //#define USE_TRIE
 
-#define BEAM_WIDTH 80000
+#define BEAM_WIDTH 400000
 
 #if defined(USE_SLICE_SAMPLING)
 /* Beta prior parameters for the slice variable */
@@ -723,8 +723,9 @@ inline bool init(
 		return false;
 	}
 	for (unsigned int i = 0; i < posterior_length; i++) {
-		posterior[i].log_probability += inner_probability
-				+ min(log_probability<Mode>(posterior[i].object), cell->prior_probability);
+		posterior[i].log_probability += inner_probability;
+		if (Mode != MODE_SAMPLE)
+			posterior[i].log_probability += min(log_probability<false>(posterior[i].object), cell->prior_probability);
 	}
 	if (state.posterior_length > 1)
 		sort(state.posterior, state.posterior_length, default_sorter());
@@ -980,6 +981,18 @@ struct cell_variables<MODE_SAMPLE, Semantics> {
 #endif
 	}
 
+	inline double get_inner_probability() const {
+		fprintf(stderr, "cell_variables.get_inner_probability ERROR:"
+			" This function can only be called in generation mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	inline void set_inner_probability(double inner) {
+		fprintf(stderr, "cell_variables.set_inner_probability ERROR:"
+			" This function can only be called in generation mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
 	inline const double get_outer_probability() const {
 		fprintf(stderr, "cell_variables.get_outer_probability ERROR:"
 			" This function cannot be called in sampling mode.\n");
@@ -1014,7 +1027,7 @@ struct cell_variables<MODE_SAMPLE, Semantics> {
 };
 
 template<parse_mode Mode, typename Semantics>
-struct cell_variables<Mode, Semantics, typename std::enable_if<Mode != MODE_SAMPLE>::type>
+struct cell_variables<Mode, Semantics, typename std::enable_if<Mode != MODE_SAMPLE && Mode != MODE_GENERATE>::type>
 {
 	double outer_probability;
 
@@ -1027,6 +1040,18 @@ struct cell_variables<Mode, Semantics, typename std::enable_if<Mode != MODE_SAMP
 	inline void init_slice_variable() const {
 		fprintf(stderr, "cell_variables.init_slice_variable ERROR:"
 			" This function can only be called in sampling mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	inline double get_inner_probability() const {
+		fprintf(stderr, "cell_variables.get_inner_probability ERROR:"
+			" This function can only be called in generation mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	inline void set_inner_probability(double inner) {
+		fprintf(stderr, "cell_variables.set_inner_probability ERROR:"
+			" This function can only be called in generation mode.\n");
 		exit(EXIT_FAILURE);
 	}
 
@@ -1048,6 +1073,53 @@ struct cell_variables<Mode, Semantics, typename std::enable_if<Mode != MODE_SAMP
 	}
 
 	static inline void free(cell_variables<Mode, Semantics>& vars) { }
+};
+
+template<typename Semantics>
+struct cell_variables<MODE_GENERATE, Semantics>
+{
+	double inner_probability;
+	double outer_probability;
+
+	inline double get_slice_variable() const {
+		fprintf(stderr, "cell_variables.get_slice_variable ERROR:"
+			" This function can only be called in sampling mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	inline void init_slice_variable() const {
+		fprintf(stderr, "cell_variables.init_slice_variable ERROR:"
+			" This function can only be called in sampling mode.\n");
+		exit(EXIT_FAILURE);
+	}
+
+	inline double get_inner_probability() const {
+		return inner_probability;
+	}
+
+	inline void set_inner_probability(double inner) {
+		inner_probability = inner;
+	}
+
+	inline double get_outer_probability() const {
+		return outer_probability;
+	}
+
+	inline void set_outer_probability(double outer) {
+		outer_probability = outer;
+	}
+
+	inline bool initialize() {
+		return true;
+	}
+
+	static inline bool copy(const cell_variables<MODE_GENERATE, Semantics>& src, cell_variables<MODE_GENERATE, Semantics>& dst) {
+		dst.inner_probability = src.inner_probability;
+		dst.outer_probability = src.outer_probability;
+		return true;
+	}
+
+	static inline void free(cell_variables<MODE_GENERATE, Semantics>& vars) { }
 };
 
 template<parse_mode Mode, typename Semantics>
@@ -1073,6 +1145,59 @@ struct cell_value {
 	 * expanded cell.
 	 */
 	cell_value<Mode, Semantics>* next;
+
+	template<bool AllowAmbiguous, unsigned int K>
+	inline bool has_completed_parses(
+			double search_log_probability,
+			unsigned int& completed_derivations,
+			double(&best_derivation_probabilities)[K]) const
+	{
+		if (best_derivation_probabilities[0] >= search_log_probability)
+			return true;
+
+		for (; completed_derivations < completed.length; completed_derivations++) {
+			const auto& parse = completed[completed_derivations];
+			double total_log_probability = parse.log_probability;
+			if (Mode != MODE_SAMPLE)
+				total_log_probability += log_probability<true>(parse.logical_form_set);
+			unsigned int index = linear_search(best_derivation_probabilities, total_log_probability, 0, K);
+			if (index == 0 || (!AllowAmbiguous && is_ambiguous(parse.logical_form_set)))
+				continue;
+			shift_left(best_derivation_probabilities, index - 1);
+			best_derivation_probabilities[index - 1] = total_log_probability;
+			if (best_derivation_probabilities[0] >= search_log_probability) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	template<bool AllowAmbiguous, unsigned int K = 1>
+	inline unsigned int get_best_parse(const nonterminal_state<Mode, Semantics>** best) const
+	{
+		array<pair<double, const nonterminal_state<Mode, Semantics>*>> derivations(32);
+		if (completed.length == 0)
+			return 0;
+
+		for (const nonterminal_state<Mode, Semantics>& parse : completed) {
+			double total_log_probability = parse.log_probability;
+			if (Mode != MODE_SAMPLE)
+				total_log_probability += log_probability<true>(parse.logical_form_set);
+			if (AllowAmbiguous || !is_ambiguous(parse.logical_form_set))
+				derivations.add({total_log_probability, &parse});
+		}
+
+		if (derivations.length == 0)
+			return 0;
+		sort(derivations);
+
+		unsigned int length = 0;
+		for (unsigned int i = derivations.length; i > 0 && length < K; i--) {
+			best[length] = derivations[i - 1].value;
+			length++;
+		}
+		return length;
+	}
 
 	static inline bool copy(const cell_value<Mode, Semantics>& src, cell_value<Mode, Semantics>& dst)
 	{
@@ -1195,33 +1320,6 @@ struct cell_list<Mode, Semantics,
 		return function(cell, logical_form_subset, SET_EQUAL);
 	}
 
-	template<bool AllowAmbiguous, unsigned int K>
-	inline bool has_completed_parses(
-			double search_log_probability,
-			unsigned int& completed_derivations,
-			double(&best_derivation_probabilities)[K]) const
-	{
-		if (best_derivation_probabilities[0] >= search_log_probability)
-			return true;
-
-		/* check if there are unambiguous parses */
-		bool finished = false;
-		for (; completed_derivations < cell.completed.length; completed_derivations++) {
-			const auto& parse = cell.completed[completed_derivations];
-			double total_log_probability = parse.log_probability;
-			unsigned int index = linear_search(best_derivation_probabilities, total_log_probability, 0, K);
-			if (index == 0 || (!AllowAmbiguous && is_ambiguous(parse.logical_form_set)))
-				continue;
-			shift_left(best_derivation_probabilities, index - 1);
-			best_derivation_probabilities[index - 1] = total_log_probability;
-			if (best_derivation_probabilities[0] >= search_log_probability) {
-				finished = true;
-				break;
-			}
-		}
-		return finished;
-	}
-
 	const double* get_inner_probability() const {
 		return cell.var.get_inner_probability();
 	}
@@ -1229,6 +1327,10 @@ struct cell_list<Mode, Semantics,
 	void set_inner_probability(const double* inner) {
 		fprintf(stderr, "cell_list.set_inner_probability ERROR: Unsupported.\n");
 		exit(EXIT_FAILURE);
+	}
+
+	inline cell_value<Mode, Semantics>& get_cell(const Semantics& logical_form_set) {
+		return cell;
 	}
 
 	static inline void free(cell_list<Mode, Semantics>& list)
@@ -1301,103 +1403,16 @@ struct cell_list<Mode, Semantics,
 #endif
 	}
 
-	template<bool AllowAmbiguous, unsigned int K>
-	inline bool has_completed_parses(
-			double search_log_probability,
-			unsigned int& completed_derivations,
-			double(&best_derivation_probabilities)[K]) const
-	{
-		if (best_derivation_probabilities[0] >= search_log_probability)
-			return true;
-
-		/* NOTE: we assume only a single cell exists in this structure */
-		bool result = false;
-		auto check_cell = [&](const cell_value<Mode, Semantics>& cell) {
-			for (; completed_derivations < cell.completed.length; completed_derivations++) {
-				const auto& parse = cell.completed[completed_derivations];
-				double total_log_probability = parse.log_probability
-						+ log_probability<Mode, true>(parse.logical_form_set);
-				unsigned int index = linear_search(best_derivation_probabilities, total_log_probability, 0, K);
-				if (index == 0 || (!AllowAmbiguous && is_ambiguous(parse.logical_form_set)))
-					continue;
-				shift_left(best_derivation_probabilities, index - 1);
-				best_derivation_probabilities[index - 1] = total_log_probability;
-				if (best_derivation_probabilities[0] >= search_log_probability) {
-					result = true;
-					return false; /* break out of the trie traversal */
-				}
-			}
-			return true;
-		};
-
-#if defined(USE_TRIE)
-		trie.iterate(check_cell);
-#else
-		for (const auto& entry : cells) {
-			const cell_value<Mode, Semantics>* current = entry.value;
-			bool finished = false;
-			while (current != NULL) {
-				if (!check_cell(*current)) {
-					finished = true;
-					break;
-				}
-				current = current->next;
-			}
-			if (finished) break;
-		}
-#endif
-		return result;
-	}
-
-	template<bool AllowAmbiguous, unsigned int K = 1>
-	inline unsigned int get_best_parse(const nonterminal_state<Mode, Semantics>** best) const
-	{
-		array<pair<double, const nonterminal_state<Mode, Semantics>*>> derivations(32);
-
-		auto check_cell = [&](const cell_value<Mode, Semantics>& cell) {
-			if (cell.completed.length == 0)
-				return true;
-
-			for (const nonterminal_state<Mode, Semantics>& parse : cell.completed) {
-				double total_log_probability = parse.log_probability
-						+ log_probability<Mode, true>(parse.logical_form_set);
-				if (AllowAmbiguous || !is_ambiguous(parse.logical_form_set))
-					derivations.add({total_log_probability, &parse});
-			}
-			return true;
-		};
-
-#if defined(USE_TRIE)
-		trie.iterate(check_cell);
-#else
-		for (const auto& entry : cells) {
-			const cell_value<Mode, Semantics>* current = entry.value;
-			while (current != NULL) {
-				if (!check_cell(*current))
-					break;
-				current = current->next;
-			}
-		}
-#endif
-
-		if (derivations.length == 0)
-			return 0;
-		sort(derivations);
-
-		unsigned int length = 0;
-		for (unsigned int i = derivations.length; i > 0 && length < K; i--) {
-			best[length] = derivations[i - 1].value;
-			length++;
-		}
-		return length;
-	}
-
 	inline double get_inner_probability() const {
 		return inner_probability;
 	}
 
 	inline void set_inner_probability(double inner) {
 		inner_probability = inner;
+	}
+
+	inline cell_value<Mode, Semantics>& get_cell(const Semantics& logical_form_set) {
+		return *cells.get(logical_form_set);
 	}
 
 	static inline void free(cell_list<Mode, Semantics>& list)
@@ -1572,16 +1587,6 @@ inline double inner_probability(
 
 template<typename Semantics>
 inline double inner_probability(
-	chart<MODE_GENERATE, Semantics>& parse_chart,
-	unsigned int nonterminal,
-	const Semantics& logical_form_set,
-	span position)
-{
-	return 0.0;
-}
-
-template<typename Semantics>
-inline double inner_probability(
 	chart<MODE_PARSE, Semantics>& parse_chart,
 	unsigned int nonterminal,
 	const Semantics& logical_form_set,
@@ -1592,6 +1597,20 @@ inline double inner_probability(
 	   remove the unnecessary arguments to this function */
 	cell_list<MODE_PARSE, Semantics>& cells = parse_chart.get_cells(nonterminal, position);
 	return cells.get_inner_probability();
+}
+
+template<typename Semantics>
+inline double inner_probability(
+	chart<MODE_GENERATE, Semantics>& parse_chart,
+	unsigned int nonterminal,
+	const Semantics& logical_form_set,
+	span position)
+{
+	bool contains;
+	cell_list<MODE_GENERATE, Semantics>& cells = parse_chart.get_cells(nonterminal, position);
+	cell_value<MODE_GENERATE, Semantics>* cell = cells.cells.get(logical_form_set, contains);
+	if (!contains) return 0.0;
+	else return cell->var.get_inner_probability();
 }
 
 template<typename Semantics>
@@ -1680,11 +1699,29 @@ double right_probability(
 	return right;
 }
 
-template<parse_mode Mode, typename Semantics,
-	typename std::enable_if<Mode == MODE_COMPUTE_BOUNDS || Mode == MODE_GENERATE>::type* = nullptr>
+template<typename Semantics>
+double right_probability(
+	const rule<Semantics>& rule,
+	chart<MODE_GENERATE, Semantics>& parse_chart,
+	const Semantics& logical_form_set,
+	unsigned int rule_position,
+	unsigned int start, unsigned int end)
+{
+	double right = 0.0;
+	for (unsigned int i = rule_position; i < rule.length; i++) {
+		Semantics next_logical_form;
+		if (!apply(rule.functions[i], logical_form_set, next_logical_form))
+			return -std::numeric_limits<double>::infinity();
+
+		right += inner_probability(parse_chart, rule.nonterminals[i], next_logical_form, {0, 0});
+	}
+	return right;
+}
+
+template<typename Semantics>
 inline double right_probability(
 	const rule<Semantics>& rule,
-	const chart<Mode, Semantics>& parse_chart,
+	const chart<MODE_COMPUTE_BOUNDS, Semantics>& parse_chart,
 	const Semantics& logical_form_set,
 	unsigned int rule_position,
 	unsigned int start, unsigned int end)
@@ -1723,9 +1760,10 @@ inline double outer_probability(
 	}
 
 	unsigned int rule_position = state.rule_position + 1;
-	if (!r.is_terminal() && Mode == MODE_PARSE) {
-		outer += right_probability(r, parse_chart, state.logical_form_set,
-				rule_position, state.positions[rule_position], state.positions[r.length]);
+	if (!r.is_terminal() && (Mode == MODE_PARSE || Mode == MODE_GENERATE)) {
+		unsigned int start = (Mode == MODE_GENERATE) ? 0 : state.positions[rule_position];
+		unsigned int end = (Mode == MODE_GENERATE) ? 0 : state.positions[r.length];
+		outer += right_probability(r, parse_chart, state.logical_form_set, rule_position, start, end);
 	}
 
 	return outer + state.cell->var.get_outer_probability() - state.cell->prior_probability;
@@ -1771,20 +1809,20 @@ inline double compute_priority(
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
-	typename std::enable_if<Mode == MODE_COMPUTE_BOUNDS || Mode == MODE_GENERATE>::type* = nullptr>
+template<typename Semantics, typename NonterminalType>
 inline double compute_priority(
-	const rule_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart,
+	const rule_state<MODE_COMPUTE_BOUNDS, Semantics>& state,
+	chart<MODE_COMPUTE_BOUNDS, Semantics>& parse_chart,
 	NonterminalType& N)
 {
 	return exp(state.log_probability + outer_probability(state, parse_chart, N));
 }
 
-template<typename Semantics, typename NonterminalType>
+template<parse_mode Mode, typename Semantics, typename NonterminalType,
+	typename std::enable_if<Mode == MODE_PARSE || Mode == MODE_GENERATE>::type* = nullptr>
 inline double compute_priority(
-	const rule_state<MODE_PARSE, Semantics>& state,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	const rule_state<Mode, Semantics>& state,
+	chart<Mode, Semantics>& parse_chart,
 	NonterminalType& N)
 {
 	Semantics logical_form;
@@ -1792,9 +1830,16 @@ inline double compute_priority(
 	if (!apply(r.functions[state.rule_position], state.logical_form_set, logical_form))
 		return 0.0;
 
+	span positions;
+	if (Mode == MODE_GENERATE) {
+		positions.start = 0; positions.end = 0;
+	} else {
+		positions.start = state.positions[state.rule_position];
+		positions.end = state.positions[state.rule_position + 1];
+	}
+
 	double outer = outer_probability(state, parse_chart, N);
-	double inner = inner_probability(parse_chart, r.nonterminals[state.rule_position],
-			logical_form, {state.positions[state.rule_position], state.positions[state.rule_position + 1]});
+	double inner = inner_probability(parse_chart, r.nonterminals[state.rule_position], logical_form, positions);
 	return exp(state.log_probability + inner + outer);
 }
 
@@ -2079,7 +2124,9 @@ bool complete_invert_state(
 	syntax_state<Mode, Semantics> new_syntax(completed_rule.syntax);
 	if (!add_child(new_syntax, syntax, completed_rule.rule_position))
 		return false;
-	double old_prior = min(log_probability<Mode>(logical_form), completed_rule.cell->prior_probability);
+	double old_prior = 0.0;
+	if (Mode != MODE_SAMPLE)
+		old_prior = min(log_probability<false>(logical_form), completed_rule.cell->prior_probability);
 	return push_nonterminal_iterator<AllowAmbiguous>(
 			queue, G, parse_chart, completed_rule.nonterminal,
 			*completed_rule.cell, new_syntax, logical_form,
@@ -2143,18 +2190,19 @@ bool check_invariants(
 			return false;
 		}
 
-		if (log_probability<Mode>(new_logical_form) > log_probability<Mode>(rule.logical_form_set)
-				- log_probability<Mode>(transformed) + log_probability<Mode>(child_logical_form) + 1.0e-12)
+		if (Mode != MODE_SAMPLE
+		 && log_probability<false>(new_logical_form) > log_probability<false>(rule.logical_form_set)
+		  - log_probability<false>(transformed) + log_probability<false>(child_logical_form) + 1.0e-12)
 		{
 			print("check_invariants WARNING: Prior probability invariant violated for separable transformation.\n", stderr);
 			valid = false;
 		}
 	}
 
-	if (log_probability<Mode>(new_logical_form) > log_probability<Mode>(child_logical_form)) {
+	if (Mode != MODE_SAMPLE && log_probability<false>(new_logical_form) > log_probability<false>(child_logical_form)) {
 		print("check_invariants WARNING: Prior of new logical form is greater than the prior of the child logical form.\n", stderr);
 		valid = false;
-	} if (log_probability<Mode>(new_logical_form) > log_probability<Mode>(rule.logical_form_set)) {
+	} if (Mode != MODE_SAMPLE && log_probability<false>(new_logical_form) > log_probability<false>(rule.logical_form_set)) {
 		print("check_invariants WARNING: Prior of new logical form is greater than the prior of the old logical form.\n", stderr);
 		valid = false;
 	}
@@ -2165,9 +2213,9 @@ bool check_invariants(
 		print("  child logical form: ", stderr); print(child_logical_form, stderr, scribe); print('\n', stderr);
 		print("  new logical form:   ", stderr); print(new_logical_form, stderr, scribe); print('\n', stderr);
 debug2 = true;
-		fprintf(stderr, "  prior of old logical form:   %.20lf\n", log_probability<Mode>(rule.logical_form_set));
-		fprintf(stderr, "  prior of child logical form: %.20lf\n", log_probability<Mode>(child_logical_form));
-		fprintf(stderr, "  prior of new logical form:   %.20lf\n", log_probability<Mode>(new_logical_form));
+		fprintf(stderr, "  prior of old logical form:   %.20lf\n", log_probability<false>(rule.logical_form_set));
+		fprintf(stderr, "  prior of child logical form: %.20lf\n", log_probability<false>(child_logical_form));
+		fprintf(stderr, "  prior of new logical form:   %.20lf\n", log_probability<false>(new_logical_form));
 debug2 = false;
 	}
 
@@ -2229,8 +2277,8 @@ check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_n
 	inverse->log_probability = rule.log_probability + inner_probability;
 	/* TODO: make this work for generic inverter structures */
 	if (Mode == MODE_PARSE) {
-		double prev_prior = min(log_probability<Mode>(rule.logical_form_set), rule.cell->prior_probability);
-		inverse->log_probability += min(log_probability<Mode>(inverse->inverter.get_next()), rule.cell->prior_probability) - prev_prior;
+		double prev_prior = min(log_probability<false>(rule.logical_form_set), rule.cell->prior_probability);
+		inverse->log_probability += min(log_probability<false>(inverse->inverter.get_next()), rule.cell->prior_probability) - prev_prior;
 		if (std::isinf(inverse->log_probability)) {
 			if (Mode != MODE_COMPUTE_BOUNDS)
 				free(inverse->inverter);
@@ -2253,21 +2301,22 @@ check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_n
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
 inline void check_log_likelihood(
 		grammar<Semantics, Distribution>& G,
 		const syntax_state<Mode, Semantics>& syntax,
 		const Semantics& logical_form_set,
 		unsigned int nonterminal_id,
-		double computed_log_likelihood)
+		double computed_log_likelihood,
+		const StringMapType& token_map)
 {
-	double expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, nonterminal_id);
+	double expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, token_map, nonterminal_id);
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
 		fprintf(stderr, "compute_nonterminal WARNING: The computed log likelihood is incorrect.\n");
 		print(logical_form_set, stderr, *debug_terminal_printer); print("\n", stderr);
 		print(syntax.get_tree(), stderr, *debug_nonterminal_printer, *debug_terminal_printer, nonterminal_id); print("\n", stderr);
 debug2 = true;
-expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, nonterminal_id);
+expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, token_map, nonterminal_id);
 debug2 = false;
 		fprintf(stderr, "  Expected log likelihood = %.20lf\n", expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.20lf\n", computed_log_likelihood);
@@ -2292,20 +2341,14 @@ inline bool complete_nonterminal(
 	unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[rule.is_terminal() ? 1 : rule.length];
 
 
-/*if (Mode == MODE_PARSE && debug_flag && nonterminal_id == G.nonterminal_names.get("V_PREDICATE") && start == 6 && end == 7
- && logical_form_set.root.type == DATALOG_PREDICATE && logical_form_set.root.pred.args[0] != NULL
- && logical_form_set.root.pred.args[1] != NULL && logical_form_set.index == NUMBER_SINGULAR
- && logical_form_set.inf == INFLECTION_PAST_PARTICIPLE) {
+/*if (Mode == MODE_PARSE && debug_flag && nonterminal_id == G.nonterminal_names.get("STRING") && start == 0 && end == 1) {
 print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_PARSE && debug_flag && nonterminal_id == G.nonterminal_names.get("V") && start == 6 && end == 7
- && logical_form_set.root.type == DATALOG_PREDICATE && logical_form_set.root.pred.args[0] != NULL
- && logical_form_set.root.pred.args[1] != NULL && logical_form_set.index == NUMBER_SINGULAR
- && logical_form_set.inf == INFLECTION_PAST_PARTICIPLE) {
+} if (Mode == MODE_PARSE && debug_flag && nonterminal_id == G.nonterminal_names.get("NP") && start == 0 && end == 1) {
 print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
 }*/
 
 if (Mode == MODE_PARSE && debug_flag) {
-check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_probability);
+check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_probability, parse_chart.token_map);
 }
 
 	if (comparison == SET_EQUAL || complete)
@@ -2327,6 +2370,13 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_probabilit
 				for (nonterminal_state<Mode, Semantics>& nonterminal : completed_cell.completed)
 					free(nonterminal);
 				completed_cell.completed.clear();
+			}
+		} else if (Mode == MODE_GENERATE) {
+			if (completed_cell.completed.length == 0) {
+				completed_cell.var.set_inner_probability(log_probability);
+			} else if (log_probability > completed_cell.completed[0].log_probability) {
+				fprintf(stderr, "complete_nonterminal WARNING: The completed nonterminal has higher"
+						" log probability than an earlier completed nonterminal at the same cell.\n");
 			}
 		}
 
@@ -2478,6 +2528,8 @@ bool expand_nonterminal(
 
 	for (const rule<Semantics>& r : rules)
 	{
+		if (Mode != MODE_GENERATE && position.end - position.start < r.length)
+			continue;
 		unsigned int end = position.start + 1;
 		unsigned int last_end = (Mode == MODE_GENERATE ? 1 : (position.end - r.length + 1));
 		if (r.length == 1) end = last_end;
@@ -2506,7 +2558,7 @@ bool expand_nonterminal(
 				new_rule->logical_form_set = logical_form_set;
 			new_rule->log_probability = 0.0;
 			if (Mode == MODE_PARSE)
-				new_rule->log_probability += min(log_probability<Mode>(logical_form_set), cell.prior_probability);
+				new_rule->log_probability += min(log_probability<false>(logical_form_set), cell.prior_probability);
 
 			double priority = compute_priority(*new_rule, parse_chart, N);
 			if (priority == 0.0) {
@@ -2548,8 +2600,8 @@ inline bool expand_nonterminal(
 		if (Mode == MODE_PARSE) {
 			/* if the child logical form is disjoint from the parent's, the prior log probability becomes additive */
 			if (!is_separable(r.functions, state.rule_position))
-				prior = min(state.cell->prior_probability, log_probability<Mode>(state.logical_form_set));
-			else prior = min(state.cell->prior_probability, log_probability<Mode>(logical_form_set));
+				prior = min(state.cell->prior_probability, log_probability<false>(state.logical_form_set));
+			else prior = min(state.cell->prior_probability, log_probability<false>(logical_form_set));
 			if (std::isinf(prior)) return true;
 		}
 
@@ -2642,21 +2694,6 @@ bool process_rule_state(
 		position.end = state.positions[state.rule_position + 1];
 	}
 
-/*const rule<Semantics>& r = state.syntax.get_rule();
-if (Mode == MODE_PARSE && debug_flag && r.length == 3 && state.nonterminal == G.nonterminal_names.get("S'")
- && r.nonterminals[0] == G.nonterminal_names.get("DP") && r.nonterminals[1] == G.nonterminal_names.get("VP")
- && r.functions[0] == datalog_expression_root::FUNCTION_SELECT_LEFT3_DISJOINT && r.functions[1] == datalog_expression_root::FUNCTION_DELETE_LEFT3_DISJOINT
- && state.positions[0] == 0 && state.positions[1] == 5 && state.logical_form_set.root.type == DATALOG_TUPLE
- && state.logical_form_set.root.tuple.elements.length == 5 && state.logical_form_set.index == NUMBER_SINGULAR) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_PARSE && debug_flag && r.length == 2 && state.nonterminal == G.nonterminal_names.get("VP_V")
- && r.nonterminals[0] == G.nonterminal_names.get("BE") && r.nonterminals[1] == G.nonterminal_names.get("V_BAR")
- && r.functions[0] == datalog_expression_root::FUNCTION_KEEP_FEATURES && r.functions[1] == datalog_expression_root::FUNCTION_FLIP_PREDICATE_PAST_PARTICIPLE
- && state.positions[0] == 5 && state.positions[1] == 6 && state.positions[2] == 10 && state.logical_form_set.root.type == DATALOG_TUPLE
- && state.logical_form_set.root.tuple.elements.length == 2 && state.logical_form_set.index == NUMBER_SINGULAR) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-}*/
-
 	/* apply the semantic transformation paired with the next nonterminal */
 	Semantics expanded_logical_forms;
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
@@ -2665,6 +2702,19 @@ print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, 
 	{
 		return false;
 	}
+
+/*const rule<Semantics>& r = state.syntax.get_rule();
+if (Mode == MODE_PARSE && debug_flag && r.length == 2 && state.nonterminal == G.nonterminal_names.get("S")
+ && r.nonterminals[0] == G.nonterminal_names.get("DP") && r.nonterminals[1] == G.nonterminal_names.get("VP")
+ && r.functions[0] == datalog_expression_root::FUNCTION_SELECT_ARG1_SINGULAR && r.functions[1] == datalog_expression_root::FUNCTION_DELETE_ARG1_SINGULAR
+ && state.positions[0] == 0 && state.positions[1] == 4 && state.positions[2] == 12) {
+print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
+} if (Mode == MODE_PARSE && debug_flag && r.length == 3 && state.nonterminal == G.nonterminal_names.get("DP")
+ && r.nonterminals[0] == G.nonterminal_names.get("DP") && r.nonterminals[1] == G.nonterminal_names.get("APOS_S") && r.nonterminals[2] == G.nonterminal_names.get("NP")
+ && r.functions[0] == datalog_expression_root::FUNCTION_SELECT_ARG2 && r.functions[1] == datalog_expression_root::FUNCTION_NULL && r.functions[2] == datalog_expression_root::FUNCTION_SELECT_ARG1
+ && state.positions[0] == 0 && state.positions[1] == 1 && state.positions[3] == 4) {
+print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
+}*/
 
 	unsigned int next_nonterminal = state.syntax.get_rule().nonterminals[state.rule_position];
 	cell_list<Mode, Semantics>& cells = parse_chart.get_cells(next_nonterminal, position);
@@ -2741,7 +2791,9 @@ bool process_nonterminal_iterator(
 		cleanup = false;
 	}
 
-	double prior = min(log_probability<Mode>(logical_form), iterator.cell->prior_probability);
+	double prior = 0.0;
+	if (Mode != MODE_SAMPLE)
+		prior = min(log_probability<false>(logical_form), iterator.cell->prior_probability);
 	return complete_nonterminal(queue, G, parse_chart, iterator.nonterminal,
 			*iterator.cell, iterator.syntax, logical_form, iterator.positions, inner_probability - prior);
 }
@@ -2929,11 +2981,14 @@ parse_result parse(
 				cell.var.set_outer_probability(0.0);
 			if (cell.expanded) return true;
 			cell.expanded = true;
-			cell.prior_probability = log_probability<Mode>(logical_form);
+			cell.prior_probability = 0.0;
+			if (Mode != MODE_SAMPLE)
+				cell.prior_probability = log_probability<false>(logical_form);
 			return expand_nonterminal(queue, G, parse_chart, logical_form_set, 1, cell, sentence, {0, sentence.length});
 		};
 	if (!root_cells.expand_cells(logical_form, expand_cell))
 		return PARSE_FAILURE;
+	cell_value<Mode, Semantics>& root_cell = root_cells.get_cell(logical_form);
 
 	timer stopwatch; parse_result result = PARSE_SUCCESS;
 	double last_priority = std::numeric_limits<double>::infinity();
@@ -2991,7 +3046,7 @@ debug_priority = log(state.priority);
 			}
 #endif
 
-			if (root_cells.template has_completed_parses<AllowAmbiguous>(
+			if (root_cell.template has_completed_parses<AllowAmbiguous>(
 					log(state.priority), completed_derivations, best_derivation_probabilities)) {
 				if (!Quiet) printf("%sTerminating search after visiting %u states.\n", parser_prefix, iteration);
 				break;
@@ -2999,7 +3054,7 @@ debug_priority = log(state.priority);
 		}
 
 #if defined(USE_BEAM_SEARCH)
-		while (Mode == MODE_PARSE && queue.size() > BEAM_WIDTH) {
+		while ((Mode == MODE_PARSE || Mode == MODE_GENERATE) && queue.size() > BEAM_WIDTH) {
 			auto first = queue.cbegin();
 			search_state<Mode, Semantics> state = *first;
 			free(state);
@@ -3122,8 +3177,8 @@ bool resample(syntax_node<Semantics>*& syntax,
 	syntax_node<Semantics> old_tree = *syntax;
 
 	double old_probability = 0.0, new_probability = 0.0;
-	if (!remove_tree(nonterminal, *syntax, logical_form, G, old_probability)) return false;
-	double old_factored_probability = log_probability(G, *syntax, logical_form);
+	if (!remove_tree(nonterminal, *syntax, logical_form, G, token_map, old_probability)) return false;
+	double old_factored_probability = log_probability(G, *syntax, logical_form, token_map);
 	chart<MODE_SAMPLE, Semantics> parse_chart = chart<MODE_SAMPLE, Semantics>(sentence.length, G.nonterminals.length, token_map);
 
 	/* sample the slice variables for the occupied cells */
@@ -3137,16 +3192,16 @@ bool resample(syntax_node<Semantics>*& syntax,
 		return false;
 
 	/* compute the (fully factorized) probability of the new tree */
-	double new_factored_probability = log_probability(G, *syntax, logical_form);
-	if (!add_tree(nonterminal, *syntax, logical_form, G, new_probability))
+	double new_factored_probability = log_probability(G, *syntax, logical_form, token_map);
+	if (!add_tree(nonterminal, *syntax, logical_form, G, token_map, new_probability))
 		return false;
 
 	/* perform Metropolis-Hastings rejection test */
 	double acceptance_probability = exp(old_factored_probability + new_probability - old_probability - new_factored_probability);
 	if (!sample_bernoulli(acceptance_probability)) {
 		/* reject the new tree */
-		if (!remove_tree(nonterminal, *syntax, logical_form, G, old_probability)
-		 || !add_tree(nonterminal, old_tree, logical_form, G, new_probability))
+		if (!remove_tree(nonterminal, *syntax, logical_form, G, token_map, old_probability)
+		 || !add_tree(nonterminal, old_tree, logical_form, G, token_map, new_probability))
 			return false;
 		free(*syntax);
 		*syntax = old_tree;
@@ -3227,9 +3282,9 @@ bool reparse(syntax_node<Semantics>*& syntax,
 	if (result == PARSE_FAILURE) return false;
 
 	/* return the best parse */
-	cell_list<MODE_PARSE, Semantics>& root_cells = parse_chart.get_cells(nonterminal, {0, sentence.length});
+	cell_value<MODE_PARSE, Semantics>& root_cell = parse_chart.get_cells(nonterminal, {0, sentence.length}).get_cell(logical_form);
 	const nonterminal_state<MODE_PARSE, Semantics>* best_parse = NULL;
-	root_cells.template get_best_parse<AllowAmbiguous>(&best_parse);
+	root_cell.template get_best_parse<AllowAmbiguous>(&best_parse);
 	if (result == PARSE_SUCCESS && best_parse == NULL) {
 		free(*syntax);
 		*syntax = best_parse->syntax.tree;
@@ -3582,9 +3637,9 @@ bool parse(
 		return false;
 
 	/* return the best parse */
-	cell_list<MODE_PARSE, Semantics>& root_cells = parse_chart.get_cells(1, {0, sentence.length});
+	cell_value<MODE_PARSE, Semantics>& root_cell = parse_chart.get_cells(1, {0, sentence.length}).get_cell(logical_form);
 	const nonterminal_state<MODE_PARSE, Semantics>* best_parse = NULL;
-	root_cells.template get_best_parse<AllowAmbiguous>(&best_parse);
+	root_cell.template get_best_parse<AllowAmbiguous>(&best_parse);
 	if (best_parse == NULL || result == PARSE_TIME_EXCEEDED)
 		return false;
 
@@ -3611,9 +3666,9 @@ bool generate(
 		return false;
 
 	/* return the best parse */
-	cell_list<MODE_GENERATE, Semantics>& root_cells = parse_chart.get_cells(1, {0, 0});
+	cell_value<MODE_GENERATE, Semantics>& root_cell = parse_chart.get_cells(1, {0, 0}).get_cell(logical_form);
 	const nonterminal_state<MODE_GENERATE, Semantics>* best_parses[K];
-	derivation_count = root_cells.template get_best_parse<false, K>(best_parses);
+	derivation_count = root_cell.template get_best_parse<false, K>(best_parses);
 	if (derivation_count == 0 || result == PARSE_TIME_EXCEEDED)
 		return false;
 

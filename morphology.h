@@ -40,17 +40,19 @@ enum inflection {
 	INFLECTION_ADJECTIVE = 6,
 	INFLECTION_COMPARATIVE = 7,
 	INFLECTION_SUPERLATIVE = 8,
+	INFLECTION_ADVERB = 9,
 
-	INFLECTION_NONE = 9,
+	INFLECTION_NONE = 10,
 
-	INFLECTION_ANY = 10
+	INFLECTION_ANY = 11
 };
 
 enum part_of_speech {
 	POS_NOUN = 1,
 	POS_VERB = 2,
 	POS_ADJECTIVE = 3,
-	POS_OTHER = 4
+	POS_ADVERB = 4,
+	POS_OTHER = 5
 };
 
 struct token {
@@ -71,6 +73,8 @@ struct token {
 		case INFLECTION_COMPARATIVE:
 		case INFLECTION_SUPERLATIVE:
 			return POS_ADJECTIVE;
+		case INFLECTION_ADVERB:
+			return POS_ADVERB;
 		case INFLECTION_ANY:
 		case INFLECTION_NONE:
 			return POS_OTHER;
@@ -216,6 +220,8 @@ inline bool print(inflection inf, Stream& out) {
 		return print("comparative", out);
 	case INFLECTION_SUPERLATIVE:
 		return print("superlative", out);
+	case INFLECTION_ADVERB:
+		return print("adverb", out);
 	case INFLECTION_ANY:
 		return print("any", out);
 	case INFLECTION_NONE:
@@ -371,14 +377,15 @@ struct morphology
 	}
 
 	inline bool initialize(hash_map<string, unsigned int>& token_map) {
-		unsigned int be, is, are, was, were, being, been;
+		unsigned int be, is, are, was, were, being, been, s, re;
 		unsigned int wit, wist, witting, wot, wite;
 		if (!get_token("be", be, token_map) || !get_token("is", is, token_map)
 		 || !get_token("are", are, token_map) || !get_token("was", was, token_map)
 		 || !get_token("were", were, token_map) || !get_token("being", being, token_map)
 		 || !get_token("been", been, token_map) || !get_token("wit", wit, token_map)
 		 || !get_token("wist", wist, token_map) || !get_token("witting", witting, token_map)
-		 || !get_token("wot", wot, token_map) || !get_token("wite", wite, token_map))
+		 || !get_token("wot", wot, token_map) || !get_token("wite", wite, token_map)
+		 || !get_token("s", s, token_map) || !get_token("re", re, token_map)) /* contracted forms of "be" */
 			return false;
 
 		if (!add_token(be,		{be, NUMBER_ANY,		INFLECTION_INFINITIVE})
@@ -388,6 +395,8 @@ struct morphology
 		 || !add_token(were,	{be, NUMBER_PLURAL,		INFLECTION_OTHER_VERB})
 		 || !add_token(being,	{be, NUMBER_ANY,		INFLECTION_PRESENT_PARTICIPLE})
 		 || !add_token(been,	{be, NUMBER_ANY,		INFLECTION_PAST_PARTICIPLE})
+		 || !add_token(s,		{s, NUMBER_SINGULAR,	INFLECTION_OTHER_VERB})
+		 || !add_token(re,		{s, NUMBER_PLURAL,		INFLECTION_OTHER_VERB})
 		 || !add_token(wit,		{wit, NUMBER_ANY,		INFLECTION_INFINITIVE})
 		 || !add_token(wot,		{wit, NUMBER_SINGULAR,	INFLECTION_OTHER_VERB})
 		 || !add_token(wite,	{wit, NUMBER_PLURAL,	INFLECTION_OTHER_VERB})
@@ -524,6 +533,7 @@ struct morphology
 			return add_token(root, {root, NUMBER_SINGULAR, INFLECTION_NOUN});
 
 		case POS_ADJECTIVE:
+		case POS_ADVERB:
 			if (inflected_forms.length != 2) {
 				if (!Quiet) {
 					print("morphology.add_root WARNING: Incorrect number of inflected forms for adjective/adverb '", stderr);
@@ -542,7 +552,8 @@ struct morphology
 				 || !add_token(token_id, {root, NUMBER_ANY, INFLECTION_SUPERLATIVE}))
 					return false;
 			}
-			return add_token(root, {root, NUMBER_ANY, INFLECTION_ADJECTIVE});
+			return add_token(root, {root, NUMBER_ANY, INFLECTION_ADJECTIVE})
+				&& add_token(root, {root, NUMBER_ANY, INFLECTION_ADVERB});
 
 		case POS_OTHER:
 			break;

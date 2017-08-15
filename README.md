@@ -4,7 +4,7 @@
 This code implements the generative model of grammar as described in [this paper](http://asaparov.org/assets/conll_2017.pdf). Given a logical form, the grammar generates a derivation tree top-down, by selecting production rules probabilistically conditioned on the logical form. The leaves of the derivation tree form the tokens of the output utterance.
 
 If you use this code in your research, please cite:
- > Abulhair Saparov, Vijay Saraswat, and Tom M. Mitchell. 2017. A Probabilistic Generative Grammar for Semantic Parsing. In *Proceedings of the 21st SIGNLL Conference on Computational Natural Language Learning*.
+ > Abulhair Saparov, Vijay Saraswat, and Tom M. Mitchell. 2017. A Probabilistic Generative Grammar for Semantic Parsing. In *Proceedings of the 21st Conference on Computational Natural Language Learning (CoNLL 2017)*.
 
 ### Dependencies
 

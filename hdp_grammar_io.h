@@ -29,7 +29,8 @@ enum grammar_token_type {
 	GRAMMAR_KEYWORD_SIMPLE,
 	GRAMMAR_KEYWORD_SPECIAL,
 	GRAMMAR_KEYWORD_PRETERMINAL,
-	GRAMMAR_KEYWORD_PRETERMINAL_NUMBER
+	GRAMMAR_KEYWORD_PRETERMINAL_NUMBER,
+	GRAMMAR_KEYWORD_PRETERMINAL_STRING
 };
 
 template<typename Stream>
@@ -65,6 +66,8 @@ bool print(const grammar_token_type& token, Stream& out) {
 		return fprintf(out, "preterminal keyword") > 0;
 	case GRAMMAR_KEYWORD_PRETERMINAL_NUMBER:
 		return fprintf(out, "number_preterminal keyword") > 0;
+	case GRAMMAR_KEYWORD_PRETERMINAL_STRING:
+		return fprintf(out, "string_preterminal keyword") > 0;
 	default:
 		fprintf(stderr, "print ERROR: Unrecognized grammar_token_type.\n");
 		return false;
@@ -82,7 +85,8 @@ const char* grammar_keywords[] = {
 	"simple",
 	"special",
 	"preterminal",
-	"number_preterminal"
+	"number_preterminal",
+	"string_preterminal"
 };
 
 grammar_token_type grammar_keyword_tokens[] = {
@@ -94,7 +98,8 @@ grammar_token_type grammar_keyword_tokens[] = {
 	GRAMMAR_KEYWORD_SIMPLE,
 	GRAMMAR_KEYWORD_SPECIAL,
 	GRAMMAR_KEYWORD_PRETERMINAL,
-	GRAMMAR_KEYWORD_PRETERMINAL_NUMBER
+	GRAMMAR_KEYWORD_PRETERMINAL_NUMBER,
+	GRAMMAR_KEYWORD_PRETERMINAL_STRING
 };
 
 enum grammar_lexer_state {
@@ -617,6 +622,8 @@ inline bool parse(terminal_prior<RulePrior>& prior,
 			prior.pos = POS_NOUN;
 		} else if (tokens[index].text == "adjective") {
 			prior.pos = POS_ADJECTIVE;
+		} else if (tokens[index].text == "adverb") {
+			prior.pos = POS_ADVERB;
 		} else {
 			read_error("Unrecognized part of speech specification", tokens[index].start);
 			return false;
@@ -757,6 +764,8 @@ bool read_nonterminal(hdp_grammar<RulePrior, Semantics>& G,
 		return read_nonterminal<PRETERMINAL>(tokens, index, G, identifier, names);
 	case GRAMMAR_KEYWORD_PRETERMINAL_NUMBER:
 		return read_nonterminal<PRETERMINAL_NUMBER>(tokens, index, G, identifier, names);
+	case GRAMMAR_KEYWORD_PRETERMINAL_STRING:
+		return read_nonterminal<PRETERMINAL_STRING>(tokens, index, G, identifier, names);
 	default:
 		read_error("Unexpected token in nonterminal declaration."
 				" Expected a nonterminal type identifier", tokens[index].start);

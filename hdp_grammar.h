@@ -544,7 +544,8 @@ bool sample(const rule_list_prior<RulePrior, Semantics>& prior, rule<Semantics>&
 enum nonterminal_type {
 	NONTERMINAL = 1,
 	PRETERMINAL = 2,
-	PRETERMINAL_NUMBER = 3
+	PRETERMINAL_NUMBER = 3,
+	PRETERMINAL_STRING = 4
 };
 
 template<typename Stream>
@@ -566,6 +567,7 @@ bool print(const nonterminal_type& type, Stream& out) {
 	case NONTERMINAL: return print("nonterminal", out);
 	case PRETERMINAL: return print("preterminal", out);
 	case PRETERMINAL_NUMBER: return print("preterminal_number", out);
+	case PRETERMINAL_STRING: return print("preterminal_string", out);
 	default:
 		fprintf(stderr, "print ERROR: Unrecognized nonterminal_type.\n");
 		return false;
@@ -1118,6 +1120,15 @@ inline bool parse_number(const rule<Semantics>& observation,
 	return true;
 }
 
+template<typename Semantics, typename StringMapType>
+inline bool parse_string(const rule<Semantics>& observation,
+		const Semantics& src_logical_form, Semantics& dst_logical_form,
+		const StringMapType& token_map)
+{
+	return observation.is_terminal()
+		&& set_string(dst_logical_form, src_logical_form, {observation.nonterminals, observation.length});
+}
+
 template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
 		typename RulePrior, typename Semantics, typename StringMapType>
 inline weighted<Semantics>* log_conditional(
@@ -1131,6 +1142,14 @@ inline weighted<Semantics>* log_conditional(
 				(weighted<Semantics>*) malloc(sizeof(weighted<Semantics>) * 1);
 
 		if (!parse_number(observation, logical_form, weighted_logical_forms[0].object, token_map))
+			return weighted_logical_forms;
+		weighted_logical_forms[0].log_probability = 0.0;
+		length++; return weighted_logical_forms;
+	} else if (distribution.type == PRETERMINAL_STRING) {
+		weighted<Semantics>* weighted_logical_forms =
+				(weighted<Semantics>*) malloc(sizeof(weighted<Semantics>) * 1);
+
+		if (!parse_string(observation, logical_form, weighted_logical_forms[0].object, token_map))
 			return weighted_logical_forms;
 		weighted_logical_forms[0].log_probability = 0.0;
 		length++; return weighted_logical_forms;
@@ -1206,6 +1225,28 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
+		length++; return weighted_terminals;
+	} else if (distribution.type == PRETERMINAL_STRING) {
+		weighted<sequence>* weighted_terminals =
+				(weighted<sequence>*) malloc(sizeof(weighted<sequence>) * 1);
+		if (weighted_terminals == NULL) {
+			fprintf(stderr, "get_terminals ERROR: Out of memory.\n");
+			return NULL;
+		}
+
+		if (any_string(logical_form)) {
+			if (!PruneUnobservedTerminals) {
+				weighted_terminals[0].log_probability = 0.0;
+				if (!init(weighted_terminals[0].object, 1))
+					weighted_terminals[0].object[0] = NEW_TERMINAL;
+				length++;
+			}
+			return weighted_terminals;
+		} else if (!get_string(logical_form, weighted_terminals[0].object)) {
+			return weighted_terminals;
+		}
+
+		weighted_terminals[0].log_probability = 0.0;
 		length++; return weighted_terminals;
 	}
 
@@ -1464,6 +1505,11 @@ double max_log_conditional(
 		if (!parse_number(observation, logical_form, dst_logical_form, token_map))
 			return -std::numeric_limits<double>::infinity();
 		free(dst_logical_form); return 0.0;
+	} else if (distribution.type == PRETERMINAL_STRING) {
+		Semantics dst_logical_form;
+		if (!parse_string(observation, logical_form, dst_logical_form, token_map))
+			return -std::numeric_limits<double>::infinity();
+		free(dst_logical_form); return 0.0;
 	}
 
 	double prior = 0.0;
@@ -1491,6 +1537,20 @@ double max_log_conditional(
 	return maximum;
 }
 
+bool is_subset(
+		unsigned int first_feature, const unsigned int* first_excluded, unsigned int first_excluded_count,
+		unsigned int second_feature, const unsigned int* second_excluded, unsigned int second_excluded_count)
+{
+	if (first_feature == ALL_EXCEPT) {
+		if (second_feature != ALL_EXCEPT) return false;
+		return is_subset(second_excluded, second_excluded_count, first_excluded, first_excluded_count);
+	} else {
+		if (second_feature != ALL_EXCEPT)
+			return first_feature == second_feature;
+		return index_of(first_feature, second_excluded, second_excluded_count) == second_excluded_count;
+	}
+}
+
 template<typename RulePrior, typename Semantics,
 	typename TerminalPrinter, typename NonterminalPrinter>
 bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
@@ -1508,29 +1568,60 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		}
 		free(logical_form_set);
 		logical_form_set = new_logical_form_set;
+		return true;
+	} else if (distribution.type == PRETERMINAL_STRING) {
+		Semantics new_logical_form_set;
+		if (!parse_string(syntax.right, logical_form_set, new_logical_form_set, token_map)) {
+			print("is_parseable ERROR: Unable to interpret string for preterminal_string at rule: ", stderr);
+			print(syntax.right, stderr, printers); print('\n', stderr);
+			return false;
+		}
+		free(logical_form_set);
+		logical_form_set = new_logical_form_set;
+		return true;
 	}
 
 	/* set the semantic features */
 	for (unsigned int i = 0; i < distribution.feature_count; i++) {
+		unsigned int expected_feature;
+		unsigned int* expected_excluded;
+		unsigned int expected_excluded_count = 0;
+		if (!get_feature(distribution.feature_sequence[i], logical_form,
+				expected_feature, expected_excluded, expected_excluded_count))
+		{
+			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
+			print(distribution.feature_sequence[i], stderr);
+			print("' from ground truth logical form at rule: ", stderr);
+			print(syntax.right, stderr, printers); print('\n', stderr);
+			return false;
+		}
+
 		unsigned int feature;
 		unsigned int* excluded;
-		unsigned int excluded_count = 0;
-		if (!get_feature(distribution.feature_sequence[i], logical_form, feature, excluded, excluded_count)) {
+		unsigned int excluded_count;
+		if (!get_feature(distribution.feature_sequence[i], logical_form_set, feature, excluded, excluded_count)) {
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
-			print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);
+			print(distribution.feature_sequence[i], stderr);
+			print("' from logical form set at rule: ", stderr);
+			print(syntax.right, stderr, printers); print('\n', stderr);
+			return false;
+		} else if (!is_subset(expected_feature, expected_excluded, expected_excluded_count, feature, excluded, excluded_count)) {
+			print("is_parseable ERROR: The semantic feature '", stderr);
+			print(distribution.feature_sequence[i], stderr);
+			print("' of the ground truth logical form is not a subset of that of the logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
 		}
 
 		Semantics old_logical_form_set = logical_form_set;
-		if (feature == ALL_EXCEPT) {
-			if (!exclude_features(distribution.feature_sequence[i], logical_form_set, excluded, excluded_count)) {
+		if (expected_feature == ALL_EXCEPT) {
+			if (!exclude_features(distribution.feature_sequence[i], logical_form_set, expected_excluded, expected_excluded_count)) {
 				print("is_parseable ERROR: Unable to exclude semantic feature '", stderr);
 				print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				return false;
 			}
-		} else if (!set_feature(distribution.feature_sequence[i], logical_form_set, feature)) {
+		} else if (!set_feature(distribution.feature_sequence[i], logical_form_set, expected_feature)) {
 			fprintf(stderr, "is_parseable ERROR: Unable to set semantic feature '");
 			print(distribution.feature_sequence[i], stderr); print("' for logical form ", stderr);
 			print(old_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
