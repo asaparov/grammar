@@ -2556,526 +2556,526 @@ void prefix_walk(const tree_semantics& logical_form, array<const tree_semantics*
 	}
 }
 
-template<typename V>
-struct tree_semantics_trie {
-	array_map<unsigned int, tree_semantics_trie<V>> children;
-	tree_semantics_trie<V>* wildcard;
-
-	V* node_value;
-	bool expanded;
-
-	template<typename T>
-	struct linked_list_node {
-		T value;
-		linked_list_node<T>* next;
-	};
-
-	tree_semantics* copy_tree(const tree_semantics& tree)
-	{
-		if (tree.label == LABEL_WILDCARD_TREE && tree.excluded_count == 0) {
-			WILDCARD_TREE.reference_count++;
-			return &WILDCARD_TREE;
-		}
-
-		tree_semantics* copy = (tree_semantics*) malloc(sizeof(tree_semantics));
-		if (copy == NULL) {
-			fprintf(stderr, "tree_semantics_rule.copy_tree ERROR: Out of memory.\n");
-			return NULL;
-		}
-
-		copy->label = tree.label;
-		copy->excluded_count = tree.excluded_count;
-		if (tree.excluded_count > 0) {
-			copy->excluded = (unsigned int*) malloc(sizeof(unsigned int) * tree.excluded_count);
-			memcpy(copy->excluded, tree.excluded, sizeof(unsigned int) * tree.excluded_count);
-		}
-		copy->left_child = (tree.left_child == NULL) ? NULL : copy_tree(*tree.left_child);
-		copy->right_child = (tree.right_child == NULL) ? NULL : copy_tree(*tree.right_child);
-		copy->reference_count = 1;
-		return copy;
-	}
-
-	tree_semantics* copy_tree(const tree_semantics& tree, linked_list_node<tree_semantics*>* stack)
-	{
-		if (stack == NULL) return copy_tree(tree);
-
-		/* the node at the end of the stack is the root */
-		while (stack->next != NULL) stack = stack->next;
-		return copy_tree(*stack->value);
-	}
-
-	enum expansion_type {
-		EXPAND_UNEXPANDED,
-		EXPAND_DESCENDANTS,
-		EXPAND_NONE
-	};
-
-	template<typename Function, expansion_type Expand, bool Equal = true>
-	void map_descendants(tree_semantics*& tree, linked_list_node<tree_semantics*>* stack, Function function)
-	{
-		tree_semantics* logical_form_set = copy_tree(*tree, stack);
-		/* we only expand this node if it's a leaf */
-		bool to_expand = (Expand == EXPAND_UNEXPANDED) && !expanded && children.size == 0 && wildcard == NULL;
-		function(*node_value, *logical_form_set, Equal ? SET_EQUAL : SET_SUBSET, to_expand);
-		core::free(*logical_form_set);
-		if (logical_form_set->reference_count == 0)
-			core::free(logical_form_set);
-		if (Expand == EXPAND_DESCENDANTS || to_expand)
-			expanded = true;
-
-		tree = (tree_semantics*) malloc(sizeof(tree_semantics));
-		tree->reference_count = 1;
-		tree->excluded_count = 0;
-		tree->left_child = &WILDCARD_TREE;
-		tree->right_child = &WILDCARD_TREE;
-		WILDCARD_TREE.reference_count += 2;
-		linked_list_node<tree_semantics*> new_stack = { tree, stack };
-
-		for (const auto& entry : children) {
-			if (entry.key == LABEL_EMPTY) {
-				if (stack != NULL) {
-					tree_semantics* old_tree = tree;
-					tree = NULL;
-					linked_list_node<tree_semantics*>* new_stack = stack;
-					tree_semantics*& next = get_next_node(tree, new_stack);
-					if (to_expand)
-						entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(next, new_stack, function);
-					else entry.value.template map_descendants<Function, Expand, false>(next, new_stack, function);
-					tree = old_tree;
-				}
-			} else {
-				tree->label = entry.key;
-				if (to_expand)
-					entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
-				else entry.value.template map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
-			}
-		}
-
-		if (Expand == EXPAND_UNEXPANDED && wildcard == NULL && children.size > 0) {
-			wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
-			if (wildcard == NULL || !init(*wildcard))
-				exit(EXIT_FAILURE);
-		} if (wildcard != NULL) {
-			tree->label = LABEL_WILDCARD;
-			if (children.size > 0) {
-				tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * children.size);
-				memcpy(tree->excluded, children.keys, children.size * sizeof(unsigned int));
-			}
-			tree->excluded_count = children.size;
-			if (to_expand)
-				wildcard->map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
-			else wildcard->map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
-		}
-
-		core::free(*tree);
-		if (tree->reference_count == 0)
-			core::free(tree);
-		tree = &WILDCARD_TREE;
-	}
-
-	tree_semantics*& get_next_node(tree_semantics*& tree, linked_list_node<tree_semantics*>*& stack)
-	{
-		if (stack == NULL) return tree; /* the stack is empty, so this is never used */
-		linked_list_node<tree_semantics*>& current = *stack;
-		if (&current.value->right_child != &tree)
-			return current.value->right_child;
-		stack = stack->next;
-		while (stack != NULL) {
-			tree_semantics* old_parent = current.value;
-			current = *stack;
-			if (current.value->right_child != old_parent)
-				return current.value->right_child;
-			stack = stack->next;
-		}
-
-		/* the stack is empty, so return the root*/
-		return current.value;
-	}
-
-	template<typename Function>
-	void expand(
-			tree_semantics*& tree, linked_list_node<tree_semantics*>* stack,
-			const tree_semantics** nodes, unsigned int node_count, Function function)
-	{
-		if (node_count == 0 || expanded) {
-			/* we found the node that maps to the logical form set */
-			map_descendants<Function, EXPAND_UNEXPANDED>(tree, stack, function);
-			return;
-		} else {
-			bool to_expand = false;
-			tree_semantics* logical_form_set = copy_tree(*tree, stack);
-			function(*node_value, *logical_form_set, SET_SUPERSET, to_expand);
-			core::free(*logical_form_set);
-			if (logical_form_set->reference_count == 0)
-				core::free(logical_form_set);
-		}
-
-		const tree_semantics* current = *nodes;
-		if (current == NULL) {
-			/* tree was initialized to WILDCARD_TREE, so decrement its reference counter */
-			WILDCARD_TREE.reference_count--;
-			tree = NULL;
-			linked_list_node<tree_semantics*>* new_stack = stack;
-			tree_semantics*& next = get_next_node(tree, new_stack);
-
-			unsigned int index = reverse_strict_linear_search(children.keys, LABEL_EMPTY, 0, children.size);
-			if (index > 0 && children.keys[index - 1] == LABEL_EMPTY) {
-				children.values[index - 1].expand(next, new_stack, nodes + 1, node_count - 1, function);
-			} else {
-				/* the child node does not exist, so create it */
-				create_child(index, LABEL_EMPTY);
-				children.values[index].expand(next, new_stack, nodes + 1, node_count - 1, function);
-			}
-		} else if (current->label == LABEL_WILDCARD || current->label == LABEL_WILDCARD_TREE) {
-			/* this is some wildcard label */
-			/* TODO: handle LABEL_WILDCARD_TREE more appropriately */
-			tree = (tree_semantics*) malloc(sizeof(tree_semantics));
-			tree->reference_count = 1;
-			tree->excluded_count = 0;
-			tree->left_child = &WILDCARD_TREE;
-			tree->right_child = &WILDCARD_TREE;
-			WILDCARD_TREE.reference_count += 2;
-			linked_list_node<tree_semantics*> new_stack = {tree, stack};
-
-			/* expand nodes that aren't excluded, and
-			   create nodes for each excluded label, but
-			   don't expand them */
-			unsigned int new_size = 0;
-			unsigned int new_capacity = 1 << (core::log2(current->excluded_count + children.size) + 2);
-			unsigned int* new_keys = (unsigned int*) malloc(sizeof(unsigned int) * new_capacity);
-			tree_semantics_trie<V>* new_values = (tree_semantics_trie<V>*)
-					malloc(sizeof(tree_semantics_trie<V>) * new_capacity);
-			auto union_both = [&](unsigned int label, unsigned int i, unsigned int j) {
-				new_keys[new_size] = label;
-				core::move(children.values[j], new_values[new_size]);
-				new_size++;
-			};
-			auto union_first = [&](unsigned int label, unsigned int i, unsigned int j) {
-				new_keys[new_size] = label;
-				create_child(new_values[new_size]);
-				new_size++;
-			};
-			auto union_second = [&](unsigned int label, unsigned int i, unsigned int j) {
-				new_keys[new_size] = label;
-				core::move(children.values[j], new_values[new_size]);
-				if (label == LABEL_EMPTY) {
-					if (stack != NULL) {
-						tree_semantics* old_tree = tree;
-						tree = NULL;
-						linked_list_node<tree_semantics*>* new_stack = stack;
-						tree_semantics*& next = get_next_node(tree, new_stack);
-						new_values[new_size].expand(next, new_stack, nodes + 1, node_count - 1, function);
-						tree = old_tree;
-					}
-				} else {
-					tree->label = label;
-					new_values[new_size].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-				}
-				new_size++;
-			};
-			set_union(union_both, union_first, union_second,
-					current->excluded, current->excluded_count,
-					children.keys, children.size);
-			core::free(children.keys);
-			core::free(children.values);
-			children.keys = new_keys;
-			children.values = new_values;
-			children.capacity = new_capacity;
-			children.size = new_size;
-
-			/* expand the wildcard node after creating the new nodes */
-			if (wildcard == NULL) {
-				wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
-				if (wildcard == NULL || !init(*wildcard))
-					exit(EXIT_FAILURE);
-			}
-			tree->label = LABEL_WILDCARD;
-			if (children.size > 0) {
-				tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * children.size);
-				memcpy(tree->excluded, children.keys, children.size * sizeof(unsigned int));
-			}
-			tree->excluded_count = children.size;
-
-			wildcard->expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-
-			core::free(*tree);
-			if (tree->reference_count == 0)
-				core::free(tree);
-			tree = &WILDCARD_TREE;
-		} else {
-			tree = new_empty_tree(current->label);
-			tree->excluded_count = 0;
-			tree->left_child = &WILDCARD_TREE;
-			tree->right_child = &WILDCARD_TREE;
-			WILDCARD_TREE.reference_count += 2;
-			linked_list_node<tree_semantics*> new_stack = {tree, stack};
-
-			unsigned int index = reverse_strict_linear_search(children.keys, current->label, 0, children.size);
-			if (index > 0 && children.keys[index - 1] == current->label) {
-				children.values[index - 1].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-			} else {
-				/* the child node does not exist, so create it */
-				create_child(index, current->label);
-				children.values[index].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-			}
-
-			core::free(*tree);
-			if (tree->reference_count == 0)
-				core::free(tree);
-			tree = &WILDCARD_TREE;
-		}
-	}
-
-	template<typename Function>
-	inline bool expand(const tree_semantics& logical_form_set, Function function)
-	{
-		array<const tree_semantics*> walk = array<const tree_semantics*>(8);
-		prefix_walk(logical_form_set, walk);
-
-		tree_semantics* tree = &WILDCARD_TREE;
-		WILDCARD_TREE.reference_count++;
-		expand(tree, NULL, walk.data, walk.length, function);
-		return true;
-	}
-
-	template<typename Function>
-	void map(tree_semantics*& tree, linked_list_node<tree_semantics*>* stack,
-			const tree_semantics** nodes, unsigned int node_count, Function function)
-	{
-		if (node_count == 0) {
-			/* we found the node that maps to the logical form set */
-			map_descendants<Function, EXPAND_UNEXPANDED>(tree, stack, function);
-			return;
-		} else {
-			bool complete = children.size == 0 && wildcard == NULL;
-			tree_semantics* logical_form_set = copy_tree(*tree, stack);
-			function(*node_value, *logical_form_set, SET_SUPERSET, complete);
-			core::free(*logical_form_set);
-			if (logical_form_set->reference_count == 0)
-				core::free(logical_form_set);
-		}
-
-		const tree_semantics* current = *nodes;
-		if (current == NULL) {
-			/* tree was initialized to WILDCARD_TREE, so decrement its reference counter */
-			WILDCARD_TREE.reference_count--;
-			tree = NULL;
-			linked_list_node<tree_semantics*>* new_stack = stack;
-			tree_semantics*& next = get_next_node(tree, new_stack);
-
-			unsigned int index = reverse_strict_linear_search(children.keys, LABEL_EMPTY, 0, children.size);
-			if (index > 0 && children.keys[index - 1] == LABEL_EMPTY)
-				children.values[index - 1].map(next, new_stack, nodes + 1, node_count - 1, function);
-			else if (wildcard != NULL)
-				wildcard->map(next, new_stack, nodes + 1, node_count - 1, function);
-		} else if (current->label == LABEL_WILDCARD || current->label == LABEL_WILDCARD_TREE) {
-			/* this is some wildcard label */
-			/* TODO: handle LABEL_WILDCARD_TREE more appropriately */
-			tree = (tree_semantics*) malloc(sizeof(tree_semantics));
-			tree->reference_count = 1;
-			tree->excluded_count = 0;
-			tree->left_child = &WILDCARD_TREE;
-			tree->right_child = &WILDCARD_TREE;
-			WILDCARD_TREE.reference_count += 2;
-			linked_list_node<tree_semantics*> new_stack = {tree, stack};
-
-			/* recurse into nodes that aren't excluded */
-			auto do_subtract = [&](unsigned int i) {
-				if (children.keys[i] == LABEL_EMPTY) {
-					if (stack != NULL) {
-						tree_semantics* old_tree = tree;
-						tree = NULL;
-						linked_list_node<tree_semantics*>* new_stack = stack;
-						tree_semantics*& next = get_next_node(tree, new_stack);
-						children.values[i].map(next, new_stack, nodes + 1, node_count - 1, function);
-						tree = old_tree;
-					}
-				} else {
-					tree->label = children.keys[i];
-					children.values[i].map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-				}
-			};
-			set_subtract(do_subtract, children.keys, children.size,
-					current->excluded, current->excluded_count);
-
-			/* expand the wildcard node after creating the new nodes */
-			if (wildcard != NULL) {
-				tree->label = LABEL_WILDCARD;
-				tree->excluded_count = 0;
-				if (children.size + current->excluded_count > 0) {
-					tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * (children.size + current->excluded_count));
-					set_union(tree->excluded, tree->excluded_count,
-							children.keys, children.size,
-							current->excluded, current->excluded_count);
-				}
-				wildcard->map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-			}
-
-			core::free(*tree);
-			if (tree->reference_count == 0)
-				core::free(tree);
-			tree = &WILDCARD_TREE;
-		} else {
-			tree = new_empty_tree(current->label);
-			tree->excluded_count = 0;
-			tree->left_child = &WILDCARD_TREE;
-			tree->right_child = &WILDCARD_TREE;
-			WILDCARD_TREE.reference_count += 2;
-			linked_list_node<tree_semantics*> new_stack = {tree, stack};
-
-			unsigned int index = reverse_strict_linear_search(children.keys, current->label, 0, children.size);
-			if (index > 0 && children.keys[index - 1] == current->label)
-				children.values[index - 1].map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-			else if (wildcard != NULL)
-				wildcard->map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
-
-			core::free(*tree);
-			if (tree->reference_count == 0)
-				core::free(tree);
-			tree = &WILDCARD_TREE;
-		}
-	}
-
-	template<typename Function>
-	inline bool map(const tree_semantics& logical_form_set, Function function)
-	{
-		array<const tree_semantics*> walk = array<const tree_semantics*>(8);
-		prefix_walk(logical_form_set, walk);
-
-		tree_semantics* tree = &WILDCARD_TREE;
-		WILDCARD_TREE.reference_count++;
-		map(tree, NULL, walk.data, walk.length, function);
-		return true;
-	}
-
-	template<typename Function>
-	inline void iterate(Function function) const
-	{
-		array<const tree_semantics_trie<V>*> stack = array<const tree_semantics_trie<V>*>(256);
-		stack.add(this);
-		while (stack.length > 0) {
-			const tree_semantics_trie<V>& node = *stack.pop();
-			if (!function(*node.node_value))
-				return;
-
-			for (const auto& child : node.children)
-				stack.add(&child.value);
-			if (node.wildcard != NULL) stack.add(node.wildcard);
-		}
-	}
-
-	void create_child(unsigned int index, unsigned int label) {
-		if (!children.ensure_capacity(children.size + 1)) {
-			fprintf(stderr, "tree_semantics_trie.create_child ERROR: Out of memory.\n");
-			exit(EXIT_FAILURE);
-		}
-		shift_right(children.keys, children.size, index);
-		shift_right(children.values, children.size, index);
-		children.keys[index] = label;
-		create_child(children.values[index]);
-		children.size++;
-	}
-
-	inline void create_child(tree_semantics_trie<V>& new_node) {
-		if (wildcard == NULL) {
-			if (!init(new_node))
-				exit(EXIT_FAILURE);
-		} else if (!copy(*wildcard, new_node)) {
-			/* TODO: make this robust to memory errors */
-			exit(EXIT_FAILURE);
-		}
-	}
-
-	static bool copy(const tree_semantics_trie<V>& src, tree_semantics_trie<V>& dst)
-	{
-		/* first copy the wildcard node */
-		if (src.wildcard == NULL) {
-			dst.wildcard = NULL;
-		} else {
-			dst.wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
-			if (!copy(*src.wildcard, *dst.wildcard)) {
-				core::free(dst.wildcard);
-				return false;
-			}
-		}
-
-		/* initialize the cell value */
-		dst.node_value = (V*) malloc(sizeof(V));
-		if (dst.node_value == NULL) {
-			fprintf(stderr, "tree_semantics_trie.copy ERROR: Out of memory.\n");
-			free(*dst.wildcard); core::free(dst.wildcard);
-			return false;
-		} else if (!V::copy(*src.node_value, *dst.node_value)) {
-			fprintf(stderr, "tree_semantics_trie.copy ERROR: "
-					"Unable to initialize generic data field.\n");
-			free(*dst.wildcard); core::free(dst.wildcard);
-			core::free(dst.node_value);
-			return false;
-		}
-
-		/* copy the remaining children */
-		if (!array_map_init(dst.children, src.children.capacity)) {
-			fprintf(stderr, "tree_semantics_trie.copy ERROR: "
-					"Unable to initialize children array_map.\n");
-			free(*dst.wildcard); core::free(dst.wildcard);
-			core::free(*dst.node_value); core::free(dst.node_value);
-			return false;
-		}
-		for (unsigned int i = 0; i < src.children.size; i++) {
-			dst.children.keys[i] = src.children.keys[i];
-			if (!copy(src.children.values[i], dst.children.values[i])) {
-				free(dst); return false;
-			}
-			dst.children.size++;
-		}
-		dst.expanded = src.expanded;
-		return true;
-	}
-
-	static void move(const tree_semantics_trie<V>& src, tree_semantics_trie<V>& dst) {
-		core::move(src.children, dst.children);
-		dst.wildcard = src.wildcard;
-		dst.node_value = src.node_value;
-		dst.expanded = src.expanded;
-	}
-
-	static void free(tree_semantics_trie<V>& node) {
-		for (auto entry : node.children)
-			core::free(entry.value);
-		core::free(node.children);
-		if (node.wildcard != NULL) {
-			core::free(*node.wildcard);
-			core::free(node.wildcard);
-		}
-		core::free(*node.node_value);
-		core::free(node.node_value);
-	}
-
-	template<typename A> friend bool init(tree_semantics_trie<A>&);
-};
-
-template<typename V>
-inline bool init(tree_semantics_trie<V>& node)
-{
-	node.wildcard = NULL;
-	if (!array_map_init(node.children, 8)) {
-		fprintf(stderr, "init ERROR: Unable to initialize array_map in tree_semantics_trie.\n");
-		return false;
-	}
-
-	node.node_value = (V*) malloc(sizeof(V));
-	if (node.node_value == NULL) {
-		fprintf(stderr, "init ERROR: Insufficient memory for generic data field in tree_semantics_trie.\n");
-		free(node.children);
-		return false;
-	} else if (!init(*node.node_value)) {
-		fprintf(stderr, "init ERROR: Unable to initialize generic data field in tree_semantics_trie.\n");
-		free(node.children); free(node.node_value);
-		return false;
-	}
-	node.expanded = false;
-	return true;
-}
+//template<typename V>
+//struct tree_semantics_trie {
+//	array_map<unsigned int, tree_semantics_trie<V>> children;
+//	tree_semantics_trie<V>* wildcard;
+//
+//	V* node_value;
+//	bool expanded;
+//
+//	template<typename T>
+//	struct linked_list_node {
+//		T value;
+//		linked_list_node<T>* next;
+//	};
+//
+//	tree_semantics* copy_tree(const tree_semantics& tree)
+//	{
+//		if (tree.label == LABEL_WILDCARD_TREE && tree.excluded_count == 0) {
+//			WILDCARD_TREE.reference_count++;
+//			return &WILDCARD_TREE;
+//		}
+//
+//		tree_semantics* copy = (tree_semantics*) malloc(sizeof(tree_semantics));
+//		if (copy == NULL) {
+//			fprintf(stderr, "tree_semantics_rule.copy_tree ERROR: Out of memory.\n");
+//			return NULL;
+//		}
+//
+//		copy->label = tree.label;
+//		copy->excluded_count = tree.excluded_count;
+//		if (tree.excluded_count > 0) {
+//			copy->excluded = (unsigned int*) malloc(sizeof(unsigned int) * tree.excluded_count);
+//			memcpy(copy->excluded, tree.excluded, sizeof(unsigned int) * tree.excluded_count);
+//		}
+//		copy->left_child = (tree.left_child == NULL) ? NULL : copy_tree(*tree.left_child);
+//		copy->right_child = (tree.right_child == NULL) ? NULL : copy_tree(*tree.right_child);
+//		copy->reference_count = 1;
+//		return copy;
+//	}
+//
+//	tree_semantics* copy_tree(const tree_semantics& tree, linked_list_node<tree_semantics*>* stack)
+//	{
+//		if (stack == NULL) return copy_tree(tree);
+//
+//		/* the node at the end of the stack is the root */
+//		while (stack->next != NULL) stack = stack->next;
+//		return copy_tree(*stack->value);
+//	}
+//
+//	enum expansion_type {
+//		EXPAND_UNEXPANDED,
+//		EXPAND_DESCENDANTS,
+//		EXPAND_NONE
+//	};
+//
+//	template<typename Function, expansion_type Expand, bool Equal = true>
+//	void map_descendants(tree_semantics*& tree, linked_list_node<tree_semantics*>* stack, Function function)
+//	{
+//		tree_semantics* logical_form_set = copy_tree(*tree, stack);
+//		/* we only expand this node if it's a leaf */
+//		bool to_expand = (Expand == EXPAND_UNEXPANDED) && !expanded && children.size == 0 && wildcard == NULL;
+//		function(*node_value, *logical_form_set, Equal ? SET_EQUAL : SET_SUBSET, to_expand);
+//		core::free(*logical_form_set);
+//		if (logical_form_set->reference_count == 0)
+//			core::free(logical_form_set);
+//		if (Expand == EXPAND_DESCENDANTS || to_expand)
+//			expanded = true;
+//
+//		tree = (tree_semantics*) malloc(sizeof(tree_semantics));
+//		tree->reference_count = 1;
+//		tree->excluded_count = 0;
+//		tree->left_child = &WILDCARD_TREE;
+//		tree->right_child = &WILDCARD_TREE;
+//		WILDCARD_TREE.reference_count += 2;
+//		linked_list_node<tree_semantics*> new_stack = { tree, stack };
+//
+//		for (const auto& entry : children) {
+//			if (entry.key == LABEL_EMPTY) {
+//				if (stack != NULL) {
+//					tree_semantics* old_tree = tree;
+//					tree = NULL;
+//					linked_list_node<tree_semantics*>* new_stack = stack;
+//					tree_semantics*& next = get_next_node(tree, new_stack);
+//					if (to_expand)
+//						entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(next, new_stack, function);
+//					else entry.value.template map_descendants<Function, Expand, false>(next, new_stack, function);
+//					tree = old_tree;
+//				}
+//			} else {
+//				tree->label = entry.key;
+//				if (to_expand)
+//					entry.value.template map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
+//				else entry.value.template map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
+//			}
+//		}
+//
+//		if (Expand == EXPAND_UNEXPANDED && wildcard == NULL && children.size > 0) {
+//			wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
+//			if (wildcard == NULL || !init(*wildcard))
+//				exit(EXIT_FAILURE);
+//		} if (wildcard != NULL) {
+//			tree->label = LABEL_WILDCARD;
+//			if (children.size > 0) {
+//				tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * children.size);
+//				memcpy(tree->excluded, children.keys, children.size * sizeof(unsigned int));
+//			}
+//			tree->excluded_count = children.size;
+//			if (to_expand)
+//				wildcard->map_descendants<Function, EXPAND_DESCENDANTS, false>(tree->left_child, &new_stack, function);
+//			else wildcard->map_descendants<Function, Expand, false>(tree->left_child, &new_stack, function);
+//		}
+//
+//		core::free(*tree);
+//		if (tree->reference_count == 0)
+//			core::free(tree);
+//		tree = &WILDCARD_TREE;
+//	}
+//
+//	tree_semantics*& get_next_node(tree_semantics*& tree, linked_list_node<tree_semantics*>*& stack)
+//	{
+//		if (stack == NULL) return tree; /* the stack is empty, so this is never used */
+//		linked_list_node<tree_semantics*>& current = *stack;
+//		if (&current.value->right_child != &tree)
+//			return current.value->right_child;
+//		stack = stack->next;
+//		while (stack != NULL) {
+//			tree_semantics* old_parent = current.value;
+//			current = *stack;
+//			if (current.value->right_child != old_parent)
+//				return current.value->right_child;
+//			stack = stack->next;
+//		}
+//
+//		/* the stack is empty, so return the root*/
+//		return current.value;
+//	}
+//
+//	template<typename Function>
+//	void expand(
+//			tree_semantics*& tree, linked_list_node<tree_semantics*>* stack,
+//			const tree_semantics** nodes, unsigned int node_count, Function function)
+//	{
+//		if (node_count == 0 || expanded) {
+//			/* we found the node that maps to the logical form set */
+//			map_descendants<Function, EXPAND_UNEXPANDED>(tree, stack, function);
+//			return;
+//		} else {
+//			bool to_expand = false;
+//			tree_semantics* logical_form_set = copy_tree(*tree, stack);
+//			function(*node_value, *logical_form_set, SET_SUPERSET, to_expand);
+//			core::free(*logical_form_set);
+//			if (logical_form_set->reference_count == 0)
+//				core::free(logical_form_set);
+//		}
+//
+//		const tree_semantics* current = *nodes;
+//		if (current == NULL) {
+//			/* tree was initialized to WILDCARD_TREE, so decrement its reference counter */
+//			WILDCARD_TREE.reference_count--;
+//			tree = NULL;
+//			linked_list_node<tree_semantics*>* new_stack = stack;
+//			tree_semantics*& next = get_next_node(tree, new_stack);
+//
+//			unsigned int index = reverse_strict_linear_search(children.keys, LABEL_EMPTY, 0, children.size);
+//			if (index > 0 && children.keys[index - 1] == LABEL_EMPTY) {
+//				children.values[index - 1].expand(next, new_stack, nodes + 1, node_count - 1, function);
+//			} else {
+//				/* the child node does not exist, so create it */
+//				create_child(index, LABEL_EMPTY);
+//				children.values[index].expand(next, new_stack, nodes + 1, node_count - 1, function);
+//			}
+//		} else if (current->label == LABEL_WILDCARD || current->label == LABEL_WILDCARD_TREE) {
+//			/* this is some wildcard label */
+//			/* TODO: handle LABEL_WILDCARD_TREE more appropriately */
+//			tree = (tree_semantics*) malloc(sizeof(tree_semantics));
+//			tree->reference_count = 1;
+//			tree->excluded_count = 0;
+//			tree->left_child = &WILDCARD_TREE;
+//			tree->right_child = &WILDCARD_TREE;
+//			WILDCARD_TREE.reference_count += 2;
+//			linked_list_node<tree_semantics*> new_stack = {tree, stack};
+//
+//			/* expand nodes that aren't excluded, and
+//			   create nodes for each excluded label, but
+//			   don't expand them */
+//			unsigned int new_size = 0;
+//			unsigned int new_capacity = 1 << (core::log2(current->excluded_count + children.size) + 2);
+//			unsigned int* new_keys = (unsigned int*) malloc(sizeof(unsigned int) * new_capacity);
+//			tree_semantics_trie<V>* new_values = (tree_semantics_trie<V>*)
+//					malloc(sizeof(tree_semantics_trie<V>) * new_capacity);
+//			auto union_both = [&](unsigned int label, unsigned int i, unsigned int j) {
+//				new_keys[new_size] = label;
+//				core::move(children.values[j], new_values[new_size]);
+//				new_size++;
+//			};
+//			auto union_first = [&](unsigned int label, unsigned int i, unsigned int j) {
+//				new_keys[new_size] = label;
+//				create_child(new_values[new_size]);
+//				new_size++;
+//			};
+//			auto union_second = [&](unsigned int label, unsigned int i, unsigned int j) {
+//				new_keys[new_size] = label;
+//				core::move(children.values[j], new_values[new_size]);
+//				if (label == LABEL_EMPTY) {
+//					if (stack != NULL) {
+//						tree_semantics* old_tree = tree;
+//						tree = NULL;
+//						linked_list_node<tree_semantics*>* new_stack = stack;
+//						tree_semantics*& next = get_next_node(tree, new_stack);
+//						new_values[new_size].expand(next, new_stack, nodes + 1, node_count - 1, function);
+//						tree = old_tree;
+//					}
+//				} else {
+//					tree->label = label;
+//					new_values[new_size].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//				}
+//				new_size++;
+//			};
+//			set_union(union_both, union_first, union_second,
+//					current->excluded, current->excluded_count,
+//					children.keys, children.size);
+//			core::free(children.keys);
+//			core::free(children.values);
+//			children.keys = new_keys;
+//			children.values = new_values;
+//			children.capacity = new_capacity;
+//			children.size = new_size;
+//
+//			/* expand the wildcard node after creating the new nodes */
+//			if (wildcard == NULL) {
+//				wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
+//				if (wildcard == NULL || !init(*wildcard))
+//					exit(EXIT_FAILURE);
+//			}
+//			tree->label = LABEL_WILDCARD;
+//			if (children.size > 0) {
+//				tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * children.size);
+//				memcpy(tree->excluded, children.keys, children.size * sizeof(unsigned int));
+//			}
+//			tree->excluded_count = children.size;
+//
+//			wildcard->expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//
+//			core::free(*tree);
+//			if (tree->reference_count == 0)
+//				core::free(tree);
+//			tree = &WILDCARD_TREE;
+//		} else {
+//			tree = new_empty_tree(current->label);
+//			tree->excluded_count = 0;
+//			tree->left_child = &WILDCARD_TREE;
+//			tree->right_child = &WILDCARD_TREE;
+//			WILDCARD_TREE.reference_count += 2;
+//			linked_list_node<tree_semantics*> new_stack = {tree, stack};
+//
+//			unsigned int index = reverse_strict_linear_search(children.keys, current->label, 0, children.size);
+//			if (index > 0 && children.keys[index - 1] == current->label) {
+//				children.values[index - 1].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//			} else {
+//				/* the child node does not exist, so create it */
+//				create_child(index, current->label);
+//				children.values[index].expand(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//			}
+//
+//			core::free(*tree);
+//			if (tree->reference_count == 0)
+//				core::free(tree);
+//			tree = &WILDCARD_TREE;
+//		}
+//	}
+//
+//	template<typename Function>
+//	inline bool expand(const tree_semantics& logical_form_set, Function function)
+//	{
+//		array<const tree_semantics*> walk = array<const tree_semantics*>(8);
+//		prefix_walk(logical_form_set, walk);
+//
+//		tree_semantics* tree = &WILDCARD_TREE;
+//		WILDCARD_TREE.reference_count++;
+//		expand(tree, NULL, walk.data, walk.length, function);
+//		return true;
+//	}
+//
+//	template<typename Function>
+//	void map(tree_semantics*& tree, linked_list_node<tree_semantics*>* stack,
+//			const tree_semantics** nodes, unsigned int node_count, Function function)
+//	{
+//		if (node_count == 0) {
+//			/* we found the node that maps to the logical form set */
+//			map_descendants<Function, EXPAND_UNEXPANDED>(tree, stack, function);
+//			return;
+//		} else {
+//			bool complete = children.size == 0 && wildcard == NULL;
+//			tree_semantics* logical_form_set = copy_tree(*tree, stack);
+//			function(*node_value, *logical_form_set, SET_SUPERSET, complete);
+//			core::free(*logical_form_set);
+//			if (logical_form_set->reference_count == 0)
+//				core::free(logical_form_set);
+//		}
+//
+//		const tree_semantics* current = *nodes;
+//		if (current == NULL) {
+//			/* tree was initialized to WILDCARD_TREE, so decrement its reference counter */
+//			WILDCARD_TREE.reference_count--;
+//			tree = NULL;
+//			linked_list_node<tree_semantics*>* new_stack = stack;
+//			tree_semantics*& next = get_next_node(tree, new_stack);
+//
+//			unsigned int index = reverse_strict_linear_search(children.keys, LABEL_EMPTY, 0, children.size);
+//			if (index > 0 && children.keys[index - 1] == LABEL_EMPTY)
+//				children.values[index - 1].map(next, new_stack, nodes + 1, node_count - 1, function);
+//			else if (wildcard != NULL)
+//				wildcard->map(next, new_stack, nodes + 1, node_count - 1, function);
+//		} else if (current->label == LABEL_WILDCARD || current->label == LABEL_WILDCARD_TREE) {
+//			/* this is some wildcard label */
+//			/* TODO: handle LABEL_WILDCARD_TREE more appropriately */
+//			tree = (tree_semantics*) malloc(sizeof(tree_semantics));
+//			tree->reference_count = 1;
+//			tree->excluded_count = 0;
+//			tree->left_child = &WILDCARD_TREE;
+//			tree->right_child = &WILDCARD_TREE;
+//			WILDCARD_TREE.reference_count += 2;
+//			linked_list_node<tree_semantics*> new_stack = {tree, stack};
+//
+//			/* recurse into nodes that aren't excluded */
+//			auto do_subtract = [&](unsigned int i) {
+//				if (children.keys[i] == LABEL_EMPTY) {
+//					if (stack != NULL) {
+//						tree_semantics* old_tree = tree;
+//						tree = NULL;
+//						linked_list_node<tree_semantics*>* new_stack = stack;
+//						tree_semantics*& next = get_next_node(tree, new_stack);
+//						children.values[i].map(next, new_stack, nodes + 1, node_count - 1, function);
+//						tree = old_tree;
+//					}
+//				} else {
+//					tree->label = children.keys[i];
+//					children.values[i].map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//				}
+//			};
+//			set_subtract(do_subtract, children.keys, children.size,
+//					current->excluded, current->excluded_count);
+//
+//			/* expand the wildcard node after creating the new nodes */
+//			if (wildcard != NULL) {
+//				tree->label = LABEL_WILDCARD;
+//				tree->excluded_count = 0;
+//				if (children.size + current->excluded_count > 0) {
+//					tree->excluded = (unsigned int*) malloc(sizeof(unsigned int) * (children.size + current->excluded_count));
+//					set_union(tree->excluded, tree->excluded_count,
+//							children.keys, children.size,
+//							current->excluded, current->excluded_count);
+//				}
+//				wildcard->map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//			}
+//
+//			core::free(*tree);
+//			if (tree->reference_count == 0)
+//				core::free(tree);
+//			tree = &WILDCARD_TREE;
+//		} else {
+//			tree = new_empty_tree(current->label);
+//			tree->excluded_count = 0;
+//			tree->left_child = &WILDCARD_TREE;
+//			tree->right_child = &WILDCARD_TREE;
+//			WILDCARD_TREE.reference_count += 2;
+//			linked_list_node<tree_semantics*> new_stack = {tree, stack};
+//
+//			unsigned int index = reverse_strict_linear_search(children.keys, current->label, 0, children.size);
+//			if (index > 0 && children.keys[index - 1] == current->label)
+//				children.values[index - 1].map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//			else if (wildcard != NULL)
+//				wildcard->map(tree->left_child, &new_stack, nodes + 1, node_count - 1, function);
+//
+//			core::free(*tree);
+//			if (tree->reference_count == 0)
+//				core::free(tree);
+//			tree = &WILDCARD_TREE;
+//		}
+//	}
+//
+//	template<typename Function>
+//	inline bool map(const tree_semantics& logical_form_set, Function function)
+//	{
+//		array<const tree_semantics*> walk = array<const tree_semantics*>(8);
+//		prefix_walk(logical_form_set, walk);
+//
+//		tree_semantics* tree = &WILDCARD_TREE;
+//		WILDCARD_TREE.reference_count++;
+//		map(tree, NULL, walk.data, walk.length, function);
+//		return true;
+//	}
+//
+//	template<typename Function>
+//	inline void iterate(Function function) const
+//	{
+//		array<const tree_semantics_trie<V>*> stack = array<const tree_semantics_trie<V>*>(256);
+//		stack.add(this);
+//		while (stack.length > 0) {
+//			const tree_semantics_trie<V>& node = *stack.pop();
+//			if (!function(*node.node_value))
+//				return;
+//
+//			for (const auto& child : node.children)
+//				stack.add(&child.value);
+//			if (node.wildcard != NULL) stack.add(node.wildcard);
+//		}
+//	}
+//
+//	void create_child(unsigned int index, unsigned int label) {
+//		if (!children.ensure_capacity(children.size + 1)) {
+//			fprintf(stderr, "tree_semantics_trie.create_child ERROR: Out of memory.\n");
+//			exit(EXIT_FAILURE);
+//		}
+//		shift_right(children.keys, children.size, index);
+//		shift_right(children.values, children.size, index);
+//		children.keys[index] = label;
+//		create_child(children.values[index]);
+//		children.size++;
+//	}
+//
+//	inline void create_child(tree_semantics_trie<V>& new_node) {
+//		if (wildcard == NULL) {
+//			if (!init(new_node))
+//				exit(EXIT_FAILURE);
+//		} else if (!copy(*wildcard, new_node)) {
+//			/* TODO: make this robust to memory errors */
+//			exit(EXIT_FAILURE);
+//		}
+//	}
+//
+//	static bool copy(const tree_semantics_trie<V>& src, tree_semantics_trie<V>& dst)
+//	{
+//		/* first copy the wildcard node */
+//		if (src.wildcard == NULL) {
+//			dst.wildcard = NULL;
+//		} else {
+//			dst.wildcard = (tree_semantics_trie<V>*) malloc(sizeof(tree_semantics_trie<V>));
+//			if (!copy(*src.wildcard, *dst.wildcard)) {
+//				core::free(dst.wildcard);
+//				return false;
+//			}
+//		}
+//
+//		/* initialize the cell value */
+//		dst.node_value = (V*) malloc(sizeof(V));
+//		if (dst.node_value == NULL) {
+//			fprintf(stderr, "tree_semantics_trie.copy ERROR: Out of memory.\n");
+//			free(*dst.wildcard); core::free(dst.wildcard);
+//			return false;
+//		} else if (!V::copy(*src.node_value, *dst.node_value)) {
+//			fprintf(stderr, "tree_semantics_trie.copy ERROR: "
+//					"Unable to initialize generic data field.\n");
+//			free(*dst.wildcard); core::free(dst.wildcard);
+//			core::free(dst.node_value);
+//			return false;
+//		}
+//
+//		/* copy the remaining children */
+//		if (!array_map_init(dst.children, src.children.capacity)) {
+//			fprintf(stderr, "tree_semantics_trie.copy ERROR: "
+//					"Unable to initialize children array_map.\n");
+//			free(*dst.wildcard); core::free(dst.wildcard);
+//			core::free(*dst.node_value); core::free(dst.node_value);
+//			return false;
+//		}
+//		for (unsigned int i = 0; i < src.children.size; i++) {
+//			dst.children.keys[i] = src.children.keys[i];
+//			if (!copy(src.children.values[i], dst.children.values[i])) {
+//				free(dst); return false;
+//			}
+//			dst.children.size++;
+//		}
+//		dst.expanded = src.expanded;
+//		return true;
+//	}
+//
+//	static void move(const tree_semantics_trie<V>& src, tree_semantics_trie<V>& dst) {
+//		core::move(src.children, dst.children);
+//		dst.wildcard = src.wildcard;
+//		dst.node_value = src.node_value;
+//		dst.expanded = src.expanded;
+//	}
+//
+//	static void free(tree_semantics_trie<V>& node) {
+//		for (auto entry : node.children)
+//			core::free(entry.value);
+//		core::free(node.children);
+//		if (node.wildcard != NULL) {
+//			core::free(*node.wildcard);
+//			core::free(node.wildcard);
+//		}
+//		core::free(*node.node_value);
+//		core::free(node.node_value);
+//	}
+//
+//	template<typename A> friend bool init(tree_semantics_trie<A>&);
+//};
+//
+//template<typename V>
+//inline bool init(tree_semantics_trie<V>& node)
+//{
+//	node.wildcard = NULL;
+//	if (!array_map_init(node.children, 8)) {
+//		fprintf(stderr, "init ERROR: Unable to initialize array_map in tree_semantics_trie.\n");
+//		return false;
+//	}
+//
+//	node.node_value = (V*) malloc(sizeof(V));
+//	if (node.node_value == NULL) {
+//		fprintf(stderr, "init ERROR: Insufficient memory for generic data field in tree_semantics_trie.\n");
+//		free(node.children);
+//		return false;
+//	} else if (!init(*node.node_value)) {
+//		fprintf(stderr, "init ERROR: Unable to initialize generic data field in tree_semantics_trie.\n");
+//		free(node.children); free(node.node_value);
+//		return false;
+//	}
+//	node.expanded = false;
+//	return true;
+//}
 
 
 #endif /* TREE_SEMANTICS_H_ */

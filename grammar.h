@@ -560,6 +560,14 @@ struct syntax_node {
 			exit(EXIT_FAILURE);
 	}
 
+	syntax_node(const rule<Semantics>& r) : right(r), reference_count(1) {
+		children = (syntax_node<Semantics>**) calloc(r.length, sizeof(syntax_node<Semantics>*));
+		if (children == NULL) {
+			fprintf(stderr, "syntax_node ERROR: Insufficient memory for child node array.\n");
+			exit(EXIT_FAILURE);
+		}
+	}
+
 	~syntax_node() { free(); }
 
 	inline void operator = (const syntax_node<Semantics>& src) {
