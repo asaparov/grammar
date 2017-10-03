@@ -1223,6 +1223,22 @@ bool is_parseable(
 		const string** token_map, double& prior,
 		unsigned int nonterminal = 1)
 {
+#if defined(USE_NONTERMINAL_PREITERATOR)
+	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
+			syntax, logical_form, logical_form_set, printers, token_map))
+		return false;
+
+	double new_prior = log_probability<false>(logical_form_set);
+	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
+		print("is_parseable ERROR: The prior is not monotonic after checking "
+				"parseability with the rule distribution to obtain logical form set ", stderr);
+		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+		print(syntax.right, stderr, printers); print('\n', stderr);
+		return false;
+	}
+	prior = new_prior;
+#endif
+
 	/* TODO: make the error messages more informative */
 	if (!syntax.right.is_terminal()) {
 		for (unsigned int i = 0; i < syntax.right.length; i++) {
@@ -1286,6 +1302,7 @@ bool is_parseable(
 		}
 	}
 
+#if !defined(USE_NONTERMINAL_PREITERATOR)
 	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
 			syntax, logical_form, logical_form_set, printers, token_map))
 		return false;
@@ -1299,6 +1316,7 @@ bool is_parseable(
 		return false;
 	}
 	prior = new_prior;
+#endif
 	return true;
 }
 
