@@ -6102,7 +6102,6 @@ Kanawha N: Kanawhas?, Kanawhae~? 1
 Kanchanjanga N: Kanchanjangas?, Kanchanjangae~? 1
 Kanchenjunga N: Kanchenjungas?, Kanchenjungae~? 1
 Kannada N: Kannadas?, Kannadae~? 1
-Kansa N: Kansas
 Kansan N: Kansans
 Kansu N: Kansus?
 Kant N: Kants?
@@ -7381,8 +7380,6 @@ Masorete N?: Masoretes
 Masorite N?: Masorites
 Masqat N: Masqats?
 Mass N: Masses
-Massachuset N: Massachusets
-Massachusett N?: Massachusetts
 Massorete N?: Massoretes
 Mast N?: Masts
 Master N?: Masters
@@ -75535,7 +75532,6 @@ peafowl N: peafowls, peafowl {:1}
 peag N: peags
 peage N?: peages
 peahen N: peahens
-peak A: peakker?, peaker<? 1 | peakkest?, peakest<? 1
 peak N: peaks
 peak V: peaked | peaking | peaks
 peakedness N?: peakednesses
@@ -96496,7 +96492,6 @@ stasis N: stases
 stat N: stats
 stat V?: stated! | stating! | stats
 statant A: statanter? | statantest?
-state A: stater | statest?
 state N: states
 state V: stated | stating | states
 statecraft N: statecrafts

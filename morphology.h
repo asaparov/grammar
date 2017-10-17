@@ -450,6 +450,44 @@ struct morphology
 		else return words;
 	}
 
+	inline bool inflect(const token& tok, hash_set<unsigned int>& inflections) const
+	{
+		const fixed_array<unsigned int>& result = inflect(tok);
+		if (!inflections.check_size(inflections.size + result.length))
+			return false;
+		for (unsigned int i = 0; i < result.length; i++)
+			inflections.add(result.elements[i]);
+		return true;
+	}
+
+	bool inflect(unsigned int root, part_of_speech pos,
+			hash_set<unsigned int>& inflections) const
+	{
+		switch (pos) {
+		case POS_NOUN:
+			return inflect({root, NUMBER_SINGULAR, INFLECTION_NOUN}, inflections)
+				&& inflect({root, NUMBER_PLURAL, INFLECTION_NOUN}, inflections)
+				&& inflect({root, NUMBER_UNCOUNTABLE, INFLECTION_NOUN}, inflections);
+		case POS_ADJECTIVE:
+			return inflect({root, NUMBER_ANY, INFLECTION_ADJECTIVE}, inflections)
+				&& inflect({root, NUMBER_ANY, INFLECTION_COMPARATIVE}, inflections)
+				&& inflect({root, NUMBER_ANY, INFLECTION_SUPERLATIVE}, inflections);
+		case POS_ADVERB:
+			return inflect({root, NUMBER_ANY, INFLECTION_ADVERB}, inflections);
+		case POS_VERB:
+			return inflect({root, NUMBER_ANY, INFLECTION_OTHER_VERB}, inflections)
+				&& inflect({root, NUMBER_ANY, INFLECTION_PAST_PARTICIPLE}, inflections)
+				&& inflect({root, NUMBER_ANY, INFLECTION_PRESENT_PARTICIPLE}, inflections)
+				&& inflect({root, NUMBER_ANY, INFLECTION_INFINITIVE}, inflections)
+				&& inflect({root, NUMBER_SINGULAR, INFLECTION_OTHER_VERB}, inflections)
+				&& inflect({root, NUMBER_PLURAL, INFLECTION_OTHER_VERB}, inflections);
+		case POS_OTHER:
+			return inflections.add(root);
+		}
+		fprintf(stderr, "morphology.inflect ERROR: Unrecognized part_of_speech.\n");
+		return false;
+	}
+
 	template<bool Quiet>
 	bool add_root(const array<char>& token,
 			part_of_speech pos, bool uncertain_pos,

@@ -957,12 +957,17 @@ inline double log_probability(
 	weighted<Semantics>* posterior = log_conditional<false, false>(
 			G.nonterminals[nonterminal_id - 1].rule_distribution,
 			observation, logical_form, token_map, length);
+
+	double weight;
 	if (length == 0)
-		return -std::numeric_limits<double>::infinity();
-	double weight = posterior[0].log_probability;
-	for (unsigned int i = 0; i < length; i++)
-		free(posterior[i]);
-	free(posterior);
+		weight = -std::numeric_limits<double>::infinity();
+	else weight = posterior[0].log_probability;
+
+	if (posterior != NULL) {
+		for (unsigned int i = 0; i < length; i++)
+			free(posterior[i]);
+		free(posterior);
+	}
 	return weight;
 }
 
