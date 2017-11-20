@@ -233,6 +233,10 @@ struct tree_semantics {
 			return *inverse;
 		}
 
+		inline const tree_semantics& get_next() const {
+			return *inverse;
+		}
+
 		inline bool is_valid(hash_map<const tree_semantics*, unsigned int>& reference_counts) const {
 			return inverse->is_valid(reference_counts);
 		}
@@ -484,6 +488,11 @@ inline bool print(const tree_semantics& tree, Stream& out, Printer& printer) {
 		}
 	}
 	return success;
+}
+
+template<typename Stream, typename... Printer>
+inline bool print(const tree_semantics::invert_iterator& inverter, Stream& out, Printer&&... printer) {
+	return print(*inverter.inverse, out, std::forward<Printer>(printer)...);
 }
 
 template<typename Stream>
@@ -1332,6 +1341,37 @@ bool invert(
 	}
 }
 
+inline bool any_number(const tree_semantics& src) {
+	fprintf(stderr, "any_number ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+inline bool get_number(const tree_semantics& src, int& value) {
+	fprintf(stderr, "get_number ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+inline bool set_number(tree_semantics& exp, const tree_semantics& set, int value) {
+	fprintf(stderr, "set_number ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+inline bool any_string(const tree_semantics& src) {
+	fprintf(stderr, "any_string ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+inline bool get_string(const tree_semantics& src, sequence& value) {
+	fprintf(stderr, "get_string ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+inline bool set_string(tree_semantics& exp, const tree_semantics& set, const sequence& value) {
+	fprintf(stderr, "set_string ERROR: This is unimplemented for tree_semantics.\n");
+	return false;
+}
+
+
 inline bool next(const tree_semantics::invert_iterator& inverter, tree_semantics& dst) {
 	dst = *inverter.inverse;
 	return true;
@@ -1590,18 +1630,19 @@ inline unsigned char get_selected(const tree_semantics::function& function) {
 	exit(EXIT_FAILURE);
 }
 
-inline bool is_separable(const tree_semantics::function* functions, unsigned int rule_position) {
+void is_separable(
+		const tree_semantics::function* functions,
+		unsigned int rule_length, bool* separable)
+{
 	unsigned char selected = 0; /* 0 is none, 1 is left, 2 is right, 3 is both */
-	for (unsigned int i = 0; i < rule_position; i++)
+	for (unsigned int i = 0; i < rule_length; i++) {
+		unsigned int next = get_selected(functions[i]);
+		if ((next & selected) == 0)
+			separable[i] = true;
+		else separable[i] = false;
+
 		selected |= get_selected(functions[i]);
-
-	unsigned int next = get_selected(functions[rule_position]);
-	return (next & selected) == 0;
-}
-
-inline bool set_number(tree_semantics& exp, const tree_semantics& set, int value) {
-	fprintf(stderr, "set_number ERROR: This is unimplemented for tree_semantics.\n");
-	return false;
+	}
 }
 
 template<typename EmitRootFunction, typename PartOfSpeechType>
@@ -1609,6 +1650,14 @@ inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
 		const tree_semantics& logical_form, EmitRootFunction emit_root)
 {
 	return emit_root(words, logical_form);
+}
+
+template<typename PartOfSpeechType>
+constexpr bool morphology_is_valid(
+		const sequence& terminal, PartOfSpeechType pos,
+		const tree_semantics& logical_form)
+{
+	return true;
 }
 
 

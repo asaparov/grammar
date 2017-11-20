@@ -81,7 +81,7 @@ struct rule_prior
 		} else {
 			if (observation.length != 2)
 				return 0.0;
-			auto nonterminals = array_histogram<unsigned int>(2);
+			auto nonterminals = array_multiset<unsigned int>(2);
 			if (!get_nonterminals(nonterminals, observation)) exit(EXIT_FAILURE);
 			double score = nonterminal_prior.probability(nonterminals)
 				 / (array_length(Semantics::functions) * array_length(Semantics::functions));
@@ -90,7 +90,7 @@ struct rule_prior
 	}
 
 	template<typename Semantics>
-	inline double probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double probability(const array_multiset<rule<Semantics>>& observations) const {
 		double product = 1.0;
 		for (const auto& entry : observations.counts)
 			product *= pow(probability(entry.key), entry.value);
@@ -104,7 +104,7 @@ struct rule_prior
 		} else {
 			if (observation.length != 2)
 				return -std::numeric_limits<double>::infinity();
-			auto nonterminals = array_histogram<unsigned int>(2);
+			auto nonterminals = array_multiset<unsigned int>(2);
 			if (!get_nonterminals(nonterminals, observation)) exit(EXIT_FAILURE);
 			double score = nonterminal_prior.log_probability(nonterminals) - 2 * Semantics::log_function_count;
 			return score + max_nonterminal_log_probability * (2 - observation.length);
@@ -112,7 +112,7 @@ struct rule_prior
 	}
 
 	template<typename Semantics>
-	inline double log_probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double log_probability(const array_multiset<rule<Semantics>>& observations) const {
 		double sum = 0.0;
 		for (const auto& entry : observations.counts)
 			sum += log_probability(entry.key) * entry.value;
@@ -146,7 +146,7 @@ struct rule_prior
 private:
 	template<typename Semantics>
 	static inline bool get_nonterminals_helper(
-		array_histogram<unsigned int>& nonterminals,
+		array_multiset<unsigned int>& nonterminals,
 		const rule<Semantics>& observation,
 		unsigned int count = 1)
 	{
@@ -158,7 +158,7 @@ private:
 
 	template<typename Semantics>
 	static bool get_nonterminals(
-		array_histogram<unsigned int>& nonterminals,
+		array_multiset<unsigned int>& nonterminals,
 		const rule<Semantics>& observation)
 	{
 		if (!get_nonterminals_helper(nonterminals, observation)) return false;
@@ -169,8 +169,8 @@ private:
 
 	template<typename Semantics>
 	static bool get_nonterminals(
-		array_histogram<unsigned int>& nonterminals,
-		const array_histogram<rule<Semantics>>& observations)
+		array_multiset<unsigned int>& nonterminals,
+		const array_multiset<rule<Semantics>>& observations)
 	{
 		for (auto entry : observations.counts) {
 			if (!get_nonterminals_helper(nonterminals, entry.key, entry.value))
@@ -276,7 +276,7 @@ struct terminal_prior
 	}
 
 	template<typename Semantics>
-	inline double probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double probability(const array_multiset<rule<Semantics>>& observations) const {
 		double product = 1.0;
 		for (const auto& entry : observations.counts)
 			product *= pow(probability(entry.key), entry.value);
@@ -291,7 +291,7 @@ struct terminal_prior
 	}
 
 	template<typename Semantics>
-	inline double log_probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double log_probability(const array_multiset<rule<Semantics>>& observations) const {
 		double sum = 0.0;
 		for (const auto& entry : observations.counts)
 			sum += log_probability(entry.key) * entry.value;
@@ -406,7 +406,7 @@ struct rule_list_prior
 		}
 	}
 
-	inline double probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double probability(const array_multiset<rule<Semantics>>& observations) const {
 		double product = 1.0;
 		for (const auto& entry : observations.counts)
 			product *= pow(probability(entry.key), entry.value);
@@ -425,7 +425,7 @@ struct rule_list_prior
 		}
 	}
 
-	inline double log_probability(const array_histogram<rule<Semantics>>& observations) const {
+	inline double log_probability(const array_multiset<rule<Semantics>>& observations) const {
 		double sum = 0.0;
 		for (const auto& entry : observations.counts)
 			sum += log_probability(entry.key) * entry.value;
@@ -610,7 +610,7 @@ struct hdp_rule_distribution
 	typename Semantics::feature* feature_sequence;
 	unsigned int feature_count;
 
-	array_histogram<rule<Semantics>> observations;
+	array_multiset<rule<Semantics>> observations;
 	hdp<RulePrior, constant<rule<Semantics>>, rule<Semantics>, double> h;
 	hdp_sampler<RulePrior, constant<rule<Semantics>>, rule<Semantics>, double> sampler;
 	cache<RulePrior, constant<rule<Semantics>>, rule<Semantics>, double> hdp_cache;

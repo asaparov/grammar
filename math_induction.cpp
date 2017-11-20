@@ -304,24 +304,27 @@ int main(int argc, const char** argv)
 			{
 				printf("Parsing sentence %u...\n", sentence_id); fflush(stdout);
 				tree_semantics logical_form = WILDCARD_TREE;
+				tree_semantics logical_form_output;
 				syntax_node<tree_semantics>& parsed_syntax =
 					*((syntax_node<tree_semantics>*) alloca(sizeof(syntax_node<tree_semantics>)));
 				auto sentence = tokenized_sentence<tree_semantics>({
 					sentences[sentence_id].data, (unsigned int) sentences[sentence_id].length});
-				if (parse<false>(parsed_syntax, logical_form, G, sentence, NULL)) {
+				unsigned int derivation_count;
+				if (parse<false, false>(&parsed_syntax, derivation_count, logical_form, &logical_form_output, G, sentence, NULL)) {
 					tree_semantics pruned_logical_form;
-					remove_wildcard_leaves(logical_form, pruned_logical_form);
+					remove_wildcard_leaves(logical_form_output, pruned_logical_form);
 					print(pruned_logical_form, out, printer); print('\n', out);
 					print(parsed_syntax, out, nonterminal_printer, printer); print("\n", out);
 
 					printf("Parse log probability: %lf (sampled derivation has log probability %lf)\n",
-							log_probability(G, parsed_syntax, pruned_logical_form),
-							log_probability(G, *syntax[sentence_id], logical_forms[sentence_id]));
+							log_probability(G, parsed_syntax, pruned_logical_form, NULL),
+							log_probability(G, *syntax[sentence_id], logical_forms[sentence_id], NULL));
 					printf("Parse prior probability: %lf (true derivation has prior probability %lf)\n",
 							log_probability<true>(pruned_logical_form),
 							log_probability<true>(logical_forms[sentence_id]));
 					print('\n', out);
-					free(pruned_logical_form); free(logical_form); free(parsed_syntax);
+					free(pruned_logical_form); free(logical_form);
+					free(logical_form_output); free(parsed_syntax);
 				}
 			}
 			break;

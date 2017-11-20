@@ -1438,7 +1438,7 @@ template<typename Stream>
 inline bool print(const null_semantics::function& function, Stream& out) {
 	switch (function.type) {
 	case null_semantics::FUNCTION_IDENTITY:
-		return print(":identity", out);
+		return print("identity", out);
 	default:
 		fprintf(stderr, "print ERROR: Unrecognized null_semantics::function type.\n");
 		return false;
@@ -1447,6 +1447,11 @@ inline bool print(const null_semantics::function& function, Stream& out) {
 
 template<typename Stream, typename Printer>
 constexpr bool print(const null_semantics& logical_form, Stream& out, Printer& printer) {
+	return true;
+}
+
+template<typename Stream, typename... Printer>
+inline bool print(const null_semantics::invert_iterator& inverter, Stream& out, Printer&&... printer) {
 	return true;
 }
 
@@ -1499,11 +1504,27 @@ constexpr bool is_separable(const null_semantics::function* functions, unsigned 
 	return false;
 }
 
+inline void is_separable(
+		const null_semantics::function* functions,
+		unsigned int rule_length, bool* separable)
+{
+	for (unsigned int i = 0; i < rule_length; i++)
+		separable[i] = false;
+}
+
 template<typename EmitRootFunction, typename PartOfSpeechType>
 inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
 		const null_semantics& logical_form, EmitRootFunction emit_root)
 {
 	return emit_root(words, logical_form);
+}
+
+template<typename PartOfSpeechType>
+constexpr bool morphology_is_valid(
+		const sequence& terminal, PartOfSpeechType pos,
+		const null_semantics& logical_form)
+{
+	return true;
 }
 
 

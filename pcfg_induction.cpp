@@ -133,7 +133,7 @@ bool initialize_tree(
 		&& initialize_tree(tree->children[1], {sentence.tokens + k, sentence.length - k}, nonterminal_count);
 }
 
-template<parse_mode Mode, bool Complete = false>
+template<bool Complete = false>
 constexpr double log_probability(const null_semantics& logical_form) {
 	return 0.0;
 }

@@ -1991,7 +1991,7 @@ void right_probability(
 	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
 	is_separable(r.functions, r.length, separable);
 
-	Semantics next_logical_form;
+	Semantics next_logical_form; initialize_any(next_logical_form);
 	if (!IgnoreNext && separable[rule.rule_position]
 	 && !apply(r.functions[rule.rule_position], rule.logical_form_set, next_logical_form))
 	{
@@ -3649,29 +3649,6 @@ fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 		/* pop the next item from the priority queue */
 		search_state<Mode, Semantics> state = queue.pop(iteration);
 		last_log_priority = log(queue.priority(root_cell));
-
-if (false && debug_flag && Mode == MODE_GENERATE) {
-fprintf(stderr, "%u\t%.*lf\n", iteration, PRINT_PROBABILITY_PRECISION, last_log_priority);
-print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print('\n', stderr);
-if (state.phase == PHASE_RULE) {
-compute_priority(*state.rule, parse_chart, get_nonterminal<Mode>(G, state.rule->nonterminal));
-} else if (state.phase == PHASE_INVERT_ITERATOR) {
-compute_priority(*state.invert_iterator, parse_chart, get_nonterminal<Mode>(G, state.invert_iterator->rule->nonterminal));
-} else if (state.phase == PHASE_NONTERMINAL_ITERATOR) {
-const Semantics& logical_form_set = state.nonterminal_iterator->posterior[state.nonterminal_iterator->iterator].object;
-double old_prior = min(state.nonterminal_iterator->cell->prior_probability, log_probability<false>(logical_form_set));
-#if defined(USE_NONTERMINAL_PREITERATOR)
-double right, prior = old_prior;
-const rule<Semantics>& rule = state.nonterminal_iterator->syntax.get_rule();
-if (!rule.is_terminal() && (Mode == MODE_PARSE || Mode == MODE_GENERATE)) {
-	right_probability(rule, logical_form_set, state.nonterminal_iterator->positions, parse_chart, old_prior, right, prior);
-} else {
-	right = 0.0; prior = old_prior;
-}
-#endif
-compute_priority(*state.nonterminal_iterator, parse_chart, get_nonterminal<Mode>(G, state.nonterminal_iterator->nonterminal));
-}
-}
 
 		bool cleanup = true;
 		switch (state.phase) {

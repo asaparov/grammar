@@ -11,14 +11,14 @@
 #include "grammar.h"
 #include "morphology.h"
 
-#include <math/histogram.h>
+#include <math/multiset.h>
 
 template<typename BaseDistribution, typename Likelihood>
 struct conjugate_pair {
 	bool preterminal;
 
 	BaseDistribution pi;
-	array_histogram<unsigned int> rules;
+	array_multiset<unsigned int> rules;
 	unsigned int nonterminal_count;
 
 	hash_map<rule<null_semantics>, array<weighted_feature_set<double>>*> posterior;
@@ -164,11 +164,12 @@ array<weighted_feature_set<double>>* log_conditional(
 	return list;
 }
 
-template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms, typename BaseDistribution, typename Likelihood>
+template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
+	typename BaseDistribution, typename Likelihood, typename StringMapType>
 inline weighted<null_semantics>* log_conditional(
 	conjugate_pair<BaseDistribution, Likelihood>& distribution,
 	const rule<null_semantics>& observation, const null_semantics& logical_form,
-	const string** token_map, unsigned int& length)
+	const StringMapType& token_map, unsigned int& length)
 {
 	length = 0;
 	const array<weighted_feature_set<double>>* posterior =
