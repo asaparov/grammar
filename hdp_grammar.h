@@ -302,7 +302,9 @@ struct terminal_prior
 			const terminal_prior<TerminalPrior>& src,
 			terminal_prior<TerminalPrior>& dst)
 	{
-		return core::copy(src.terminal_prior, dst.terminal_prior) && core::copy(src.excluded, dst.excluded);
+		return core::copy(src.prior, dst.prior)
+			&& core::copy(src.excluded, dst.excluded)
+			&& core::copy(src.pos, dst.pos);
 	}
 
 	static inline void free(terminal_prior<TerminalPrior>& prior) {
