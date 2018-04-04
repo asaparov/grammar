@@ -183,7 +183,7 @@ private:
 	}
 
 	inline bool initialize(syntax_node<Semantics>** token_array, unsigned int count) {
-		unsigned int capacity = 1 << (log2(count) + 2);
+		unsigned int capacity = 1 << (core::log2(count) + 2);
 		if (!resize(capacity)) {
 			free(); return false;
 		}

@@ -3,3 +3,5 @@
 *.exe
 math_induction
 pcfg_induction
+math_induction_dbg
+pcfg_induction_dbg
