@@ -14,8 +14,8 @@ constexpr bool USE_SLICE_SAMPLING = false; /* enable/disable slice sampling (onl
 constexpr bool USE_BEAM_SEARCH = false; /* enable/disable beam search (only affects parsing) */
 constexpr bool USE_NONTERMINAL_PREITERATOR = false; /* use nonterminal_iterator states either before or after completing rule_states */
 
-#define BEAM_WIDTH 10000
-#define PRINT_PROBABILITY_PRECISION 20
+constexpr unsigned int BEAM_WIDTH = 10000;
+constexpr unsigned int PRINT_PROBABILITY_PRECISION = 20;
 
 /* Beta prior parameters for the slice variable */
 constexpr double SLICE_ALPHA = 10.0;
