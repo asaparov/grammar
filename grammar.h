@@ -1057,6 +1057,14 @@ bool add_tree(unsigned int nonterminal_id,
 {
 	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
 
+	if (!N.rule_distribution.has_terminal_rules() && syntax.right.is_terminal()) {
+		print("add_tree ERROR: Attempted to add a terminal rule to a nonterminal without terminal rules.\n", stderr);
+		return false;
+	} else if (!N.rule_distribution.has_nonterminal_rules() && !syntax.right.is_terminal()) {
+		print("add_tree ERROR: Attempted to add a non-terminal rule to a preterminal.\n", stderr);
+		return false;
+	}
+
 	N.clear();
 	if (!add(N.rule_distribution, syntax.right, logical_form))
 		return false;
