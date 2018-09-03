@@ -27,6 +27,7 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 #include <core/map.h>
 #include <math/distributions.h>
 #include <math/log.h>
+#include <mutex>
 #include <set>
 
 
