@@ -129,7 +129,7 @@ struct rule {
 	}
 
 	static inline void set_empty(rule<Semantics>* rules, unsigned int count) {
-		memset(rules, 0, sizeof(rule<Semantics>) * count);
+		memset(static_cast<void*>(rules), 0, sizeof(rule<Semantics>) * count);
 	}
 
 	static inline void free(rule<Semantics>& r) {

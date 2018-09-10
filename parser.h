@@ -268,7 +268,7 @@ private:
 		auto new_tokens = (syntax_node<Semantics>**)
 				realloc(tokens, sizeof(syntax_node<Semantics>*) * new_capacity);
 		auto new_cache = (hash_map<node_label<Semantics>, double>*)
-				realloc(cache, sizeof(hash_map<node_label<Semantics>, double>) * new_capacity);
+				realloc(static_cast<void*>(cache), sizeof(hash_map<node_label<Semantics>, double>) * new_capacity);
 		auto new_end_terminal = (unsigned int*) realloc(
 				end_terminal, sizeof(unsigned int) * new_capacity);
 		if (new_tokens == NULL || new_cache == NULL || new_end_terminal == NULL) {
