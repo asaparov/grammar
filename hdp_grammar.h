@@ -1063,7 +1063,7 @@ const array<weighted_feature_set<double>>* log_conditional(
 
 		if (observation_index == distribution.observations.counts.size) {
 			/* this is an unobserved rule */
-			log_probability += distribution.h.pi.template log_probability(observation);
+			log_probability += distribution.h.pi.log_probability(observation);
 		}
 		if (DiscardImpossible && log_probability == -std::numeric_limits<double>::infinity())
 			continue;
