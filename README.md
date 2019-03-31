@@ -1,7 +1,7 @@
 
 **TODO:** Document this code. The repository is located at <https://github.com/asaparov/grammar>.
 
-This code implements the generative model of grammar as described in [this paper](http://asaparov.org/assets/conll_2017.pdf). Given a logical form, the grammar generates a derivation tree top-down, by selecting production rules probabilistically conditioned on the logical form. The leaves of the derivation tree form the tokens of the output utterance.
+This code implements the generative model of grammar as described in [this paper](https://asaparov.org/assets/conll_2017.pdf). Given a logical form, the grammar generates a derivation tree top-down, by selecting production rules probabilistically conditioned on the logical form. The leaves of the derivation tree form the tokens of the output utterance.
 
 If you use this code in your research, please cite:
  > Abulhair Saparov, Vijay Saraswat, and Tom M. Mitchell. 2017. A Probabilistic Generative Grammar for Semantic Parsing. In *Proceedings of the 21st Conference on Computational Natural Language Learning (CoNLL 2017)*.
@@ -18,7 +18,7 @@ This library depends on [core](https://github.com/asaparov/core), [math](https:/
 
 `struct null_semantics` in `grammar.h` is an example of a `Semantics` type where the logical forms are empty. `pcfg_grammar.h` implements a `RuleDistribution` type where the distribution over production rules does not depend on the logical form. The test program in `pcfg_induction.cpp` uses this rule distribution along with `null_semantics` to effectively perform grammar induction on a [probabilistic context-free grammar](https://en.wikipedia.org/wiki/Stochastic_context-free_grammar).
 
-`hdp_grammar.h` defines `struct hdp_rule_distribution` which provides another example of a `RuleDistribution` type, where the distribution over production rules is given by a [hierarchical Dirichlet process](http://asaparov.org/docs/hdp/hdp.h.html) (HDP).
+`hdp_grammar.h` defines `struct hdp_rule_distribution` which provides another example of a `RuleDistribution` type, where the distribution over production rules is given by a [hierarchical Dirichlet process](https://asaparov.org/docs/hdp/hdp.h.html) (HDP).
 
 The parser and Metropolis-Hastings sampler (for training) are implemented in `parser.h`. Since the structure of the two algorithms are so similar, they are implemented as a single algorithm, where the `Mode` template parameter determines whether the algorithm is parsing or sampling. The function `parse_result parse(...)` contains the main loop of this algorithm, where at every iteration, the search state is popped from the priority queue (agenda) and processed according to its type. This processing may add new search states to the priority queue.
 
