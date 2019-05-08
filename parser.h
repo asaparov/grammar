@@ -2626,23 +2626,6 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
-bool complete_nonterminal(
-	agenda<Mode, Semantics>& queue,
-	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
-	unsigned int nonterminal,
-	cell_value<Mode, Semantics>& cell,
-	const syntax_state<Mode, Semantics>& syntax,
-	const Semantics& logical_form_set,
-	unsigned int* positions, double log_probability)
-{
-	return complete_nonterminal(queue, G,
-			parse_chart, sentence, nonterminal, cell, syntax,
-			logical_form_set, log_probability, positions);
-}
-
 template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution>
 inline bool push_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
@@ -2677,7 +2660,7 @@ inline bool push_nonterminal_iterator(
 								cell, sentence, {start, end}, inner_log_probability - prior + inside);
 				}
 				return complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell,
-						syntax, logical_form_set, positions, inner_log_probability + inside);
+						syntax, logical_form_set, inner_log_probability + inside, positions);
 			}
 
 			unsigned int posterior_length;
@@ -2701,7 +2684,7 @@ inline bool push_nonterminal_iterator(
 				   (this is not available in parse mode since it messes monotonicity) */
 				const weighted<Semantics>& singleton = posterior[0];
 				if (!complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell, syntax,
-						singleton.object, positions, singleton.log_probability + inner_log_probability))
+						singleton.object, singleton.log_probability + inner_log_probability, positions))
 					return false;
 				free(posterior[0]);
 				free(posterior);
@@ -2881,7 +2864,7 @@ bool complete_invert_state(
 		return complete_nonterminal(
 				queue, G, parse_chart, sentence, completed_rule.nonterminal,
 				*completed_rule.cell, new_syntax, logical_form,
-				completed_rule.positions, inner_probability - old_prior);
+				inner_probability - old_prior, completed_rule.positions);
 	} else {
 		return push_nonterminal_iterator<AllowAmbiguous>(
 				queue, G, parse_chart, sentence, completed_rule.nonterminal,
@@ -3324,13 +3307,13 @@ print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, 
 	return cells.expand_cells(expanded_logical_forms, expand_cell);
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution>
 bool process_terminal_iterator(
-	agenda<Mode, Semantics>& queue,
+	agenda<MODE_GENERATE, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<MODE_GENERATE, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
-	terminal_iterator_state<Mode, Semantics>& iterator,
+	terminal_iterator_state<MODE_GENERATE, Semantics>& iterator,
 	bool& cleanup)
 {
 	const sequence& terminal = iterator.terminals[iterator.iterator].object;
@@ -3339,19 +3322,33 @@ bool process_terminal_iterator(
 	iterator.iterator++;
 	if (iterator.iterator < iterator.terminal_count) {
 		/* add the iterator back into the search queue if there are remaining items */
-		search_state<Mode, Semantics> state;
+		search_state<MODE_GENERATE, Semantics> state;
 		state.terminal_iterator = &iterator;
 		state.phase = PHASE_TERMINAL_ITERATOR;
 		state.priority = compute_priority(iterator, parse_chart,
-				get_nonterminal<Mode>(G, iterator.nonterminal));
+				get_nonterminal<MODE_GENERATE>(G, iterator.nonterminal));
 		queue.push(state, *iterator.cell);
 		cleanup = false;
 	}
 
 	return complete_nonterminal(
 			queue, G, parse_chart, sentence, iterator.nonterminal,
-			*iterator.cell, syntax_state<Mode, Semantics>(terminal),
-			iterator.logical_form, NULL, inner_probability);
+			*iterator.cell, syntax_state<MODE_GENERATE, Semantics>(terminal),
+			iterator.logical_form, inner_probability, NULL);
+}
+
+template<parse_mode Mode, typename Semantics, typename Distribution,
+	typename std::enable_if<Mode != MODE_GENERATE>::type* = nullptr>
+bool process_terminal_iterator(
+	agenda<Mode, Semantics>& queue,
+	grammar<Semantics, Distribution>& G,
+	chart<Mode, Semantics>& parse_chart,
+	const tokenized_sentence<Semantics>& sentence,
+	terminal_iterator_state<Mode, Semantics>& iterator,
+	bool& cleanup)
+{
+	fprintf(stderr, "process_terminal_iterator ERROR: This function should only be called in generation mode.\n");
+	return false;
 }
 
 template<parse_mode Mode, typename Semantics, typename Distribution>
@@ -3396,7 +3393,7 @@ bool process_nonterminal_iterator(
 					logical_form, *iterator.cell, sentence, {start, end}, inner_probability - right);
 	}
 	return complete_nonterminal(queue, G, parse_chart, sentence, iterator.nonterminal,
-			*iterator.cell, iterator.syntax, logical_form, iterator.positions, inner_probability - old_prior);
+			*iterator.cell, iterator.syntax, logical_form, inner_probability - old_prior, iterator.positions);
 }
 
 /* NOTE: this function assumes syntax.children is NULL */
