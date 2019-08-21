@@ -118,9 +118,16 @@ bool initialize_tree(
 	/* pick a random split point from {1, ..., n - 1} */
 	unsigned int k = rand() % (sentence.length - 1) + 1;
 
-	rule<null_semantics> branch = rule<null_semantics>(2);
-	branch.functions[0] = null_semantics::FUNCTION_IDENTITY;
-	branch.functions[1] = null_semantics::FUNCTION_IDENTITY;
+	rule<null_semantics>& branch = *((rule<null_semantics>*) alloca(sizeof(rule<null_semantics>)));
+	branch.length = 2;
+	branch.transformations = (transformation<null_semantics>*) malloc(sizeof(transformation<null_semantics>) * branch.length);
+	branch.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.length);
+	branch.transformations[0].function_count = 1;
+	branch.transformations[0].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.transformations[0].function_count);
+	branch.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+	branch.transformations[1].function_count = 1;
+	branch.transformations[1].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.transformations[1].function_count);
+	branch.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
 	branch.nonterminals[0] = (k == 1)
 		? initialize_preterminal({sentence.tokens, k})
 		: random_nonterminal(nonterminal_count);
@@ -128,9 +135,11 @@ bool initialize_tree(
 		? initialize_preterminal({sentence.tokens + k, sentence.length - k})
 		: random_nonterminal(nonterminal_count);
 
-	return init(*tree, branch)
-		&& initialize_tree(tree->children[0], {sentence.tokens, k}, nonterminal_count)
-		&& initialize_tree(tree->children[1], {sentence.tokens + k, sentence.length - k}, nonterminal_count);
+	bool result = init(*tree, branch)
+	 		   && initialize_tree(tree->children[0], {sentence.tokens, k}, nonterminal_count)
+			   && initialize_tree(tree->children[1], {sentence.tokens + k, sentence.length - k}, nonterminal_count);
+	free(branch);
+	return result;
 }
 
 template<bool Complete = false>
@@ -189,7 +198,7 @@ int main(int argc, const char** argv)
 		shuffle(order, sentence_count);
 		for (unsigned int i = 0; i < sentence_count; i++) {
 			auto sentence = tokenized_sentence<null_semantics>(sentences[order[i]]);
-			resample(syntax[order[i]], G, null_semantics(), sentence, NULL);
+			resample(syntax[order[i]], G, null_semantics(), sentence, dummy_morphology_parser(), NULL);
 		}
 		/* TODO: cleanup the rule distributions (remove zeros) */
 	}

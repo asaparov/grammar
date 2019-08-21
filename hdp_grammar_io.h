@@ -420,13 +420,18 @@ bool grammar_lex(array<grammar_token>& tokens,
 	return true;
 }
 
-template<typename T>
-inline bool read_list_item(
+template<typename Semantics>
+inline bool read_feature_list_item(
 		const array<grammar_token>& tokens,
-		unsigned int& index, T& item)
+		unsigned int& index, typename Semantics::feature& item)
 {
-	return (expect_token(tokens, index, GRAMMAR_IDENTIFIER, "semantic feature/function identifier")
-		 && parse(item, tokens[index].text));
+	if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "semantic feature/function identifier")) {
+		return false;
+	} else if (!Semantics::interpret(item, tokens[index].text)) {
+		fprintf(stderr, "ERROR at %d:%d: Failed to read semantic feature name.\n", tokens[index].start.line, tokens[index].start.column);
+		return false;
+	}
+	return true;
 }
 
 inline bool read_list_item(
@@ -511,6 +516,47 @@ inline bool read_list(
 			return false;
 		}
 		if (!read_list_item(tokens, index, list[length]))
+			return false;
+		index++; length++;
+
+		if (index == tokens.length) {
+			fprintf(stderr, "ERROR at %d:%d: Unexpected end of input.\n",
+					tokens[index - 1].end.line, tokens[index - 1].end.column);
+			return false;
+		} else if (tokens[index].type == GRAMMAR_RIGHT_BRACE) {
+			index++; break;
+		} else if (tokens[index].type == GRAMMAR_COMMA) {
+			index++;
+		} else {
+			fprintf(stderr, "ERROR at %d:%d: Unexpected token ",
+					tokens[index].start.line, tokens[index].start.column);
+			print(tokens[index].type, stderr);
+			fprintf(stderr, ". Expected a comma or closing brace.\n");
+			return false;
+		}
+	}
+
+	return true;
+}
+
+template<typename Semantics, typename SizeType,
+	typename std::enable_if<std::is_integral<SizeType>::value>::type* = nullptr>
+inline bool read_feature_list(
+		const array<grammar_token>& tokens, unsigned int& index,
+		typename Semantics::feature*& list, SizeType& length, SizeType& capacity)
+{
+	/* check if the list is empty */
+	if (index < tokens.length && tokens[index].type == GRAMMAR_RIGHT_BRACE) {
+		index++;
+		return true;
+	}
+
+	while (true) {
+		if (!ensure_capacity(list, capacity, length + 1)) {
+			fprintf(stderr, "read_feature_list ERROR: Unable to expand list.\n");
+			return false;
+		}
+		if (!read_feature_list_item<Semantics>(tokens, index, list[length]))
 			return false;
 		index++; length++;
 
@@ -702,7 +748,7 @@ inline bool read_nonterminal(const array<grammar_token>& tokens,
 		free_nonterminal(new_nonterminal, features); return false;
 	}
 	index++;
-	if (!read_list(tokens, index, features, feature_count, feature_capacity)) {
+	if (!read_feature_list<Semantics>(tokens, index, features, feature_count, feature_capacity)) {
 		free_nonterminal(new_nonterminal, features); return false;
 	}
 	if (feature_count == 0) {
@@ -774,50 +820,23 @@ bool read_nonterminal(hdp_grammar<RulePrior, Semantics>& G,
 	}
 }
 
-template<bool IsTerminal, typename Semantics>
-inline bool ensure_capacity(rule<Semantics>& r, unsigned int& capacity) {
-	if (r.length < capacity)
-		return true;
-	unsigned int new_capacity = capacity;
-	core::expand_capacity(new_capacity, r.length + 1);
-	if (!core::resize(r.nonterminals, new_capacity)
-	 || (!IsTerminal && !core::resize(r.functions, new_capacity)))
-		return false;
-	capacity = new_capacity;
-	return true;
-}
-
-template<bool IsTerminal, typename Semantics>
-inline bool trim(rule<Semantics>& r) {
-	return core::resize(r.nonterminals, r.length)
-		&& (IsTerminal || core::resize(r.functions, r.length));
-}
-
-template<typename Semantics>
-bool emit_preterminal_token(
-		rule<Semantics>& r, unsigned int& rule_capacity,
+inline bool emit_preterminal_token(
+		array<unsigned int>& preterminal_tokens,
 		string& token, hash_map<string, unsigned int>& names)
 {
 	unsigned int id;
 	if (!get_token(token, id, names))
 		return false;
 
-	if (!ensure_capacity<true>(r, rule_capacity))
-		return false;
-	r.nonterminals[r.length] = id;
-	r.length++;
-	return true;
+	return preterminal_tokens.add(id);
 }
 
-template<typename Semantics>
 bool read_preterminal_rule(
 		const array<grammar_token>& tokens,
-		unsigned int& index, rule<Semantics>& r,
-		hash_map<string, unsigned int>& names,
-		unsigned int& rule_capacity)
+		unsigned int& index,
+		array<unsigned int>& preterminal_tokens,
+		hash_map<string, unsigned int>& names)
 {
-	r.functions[0] = Semantics::terminal_function();
-
 	if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "right-hand side string"))
 		return false;
 	bool whitespace_state = true;
@@ -829,7 +848,7 @@ bool read_preterminal_rule(
 			if (!whitespace_state) {
 				token.data = src.data + token_start;
 				token.length = i - token_start;
-				if (!emit_preterminal_token(r, rule_capacity, token, names))
+				if (!emit_preterminal_token(preterminal_tokens, token, names))
 					return false;
 				whitespace_state = true;
 			}
@@ -844,53 +863,82 @@ bool read_preterminal_rule(
 	if (!whitespace_state) {
 		token.data = src.data + token_start;
 		token.length = src.length - token_start;
-		if (!emit_preterminal_token(r, rule_capacity, token, names))
+		if (!emit_preterminal_token(preterminal_tokens, token, names))
 			return false;
 	}
 
 	index++;
-	return trim<true>(r);
+	return true;
+}
+
+template<typename Semantics>
+bool read_transformation(const array<grammar_token>& tokens,
+		unsigned int& index, transformation<Semantics>& t)
+{
+	typedef typename Semantics::function function;
+	array<function>& functions = *((array<function>*) alloca(sizeof(array<function>)));
+	if (!array_init(functions, 4)) return false;
+	if (index < tokens.length && tokens[index].type == GRAMMAR_COLON) {
+		index++;
+		while (true) {
+			if (!functions.ensure_capacity(functions.length + 1))
+				return false;
+
+			if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "semantic transformation function in right-hand side token"))
+				return false;
+			const grammar_token& transform = tokens[index];
+			index++;
+
+			if (!Semantics::interpret(functions[functions.length], transform.text)) {
+				fprintf(stderr, "ERROR at %u:%u: Unrecognized semantic transform '",
+						transform.start.line, transform.start.column);
+				print(transform.text, stderr);
+				fprintf(stderr, "'.\n");
+				return false;
+			}
+			functions.length++;
+
+			if (index >= tokens.length || tokens[index].type != GRAMMAR_COMMA)
+				break;
+			index++;
+		}
+	}
+
+	if (functions.length == 0)
+		functions[functions.length++] = Semantics::default_function();
+
+	t.functions = functions.data;
+	t.function_count = functions.length;
+	return true;
 }
 
 template<typename RulePrior, typename Semantics>
 bool read_rule(const hdp_grammar<RulePrior, Semantics>& G,
 		const array<grammar_token>& tokens,
-		unsigned int& index, rule<Semantics>& r,
-		unsigned int& rule_capacity, double& prior)
+		unsigned int& index, array<unsigned int>& nonterminals,
+		array<transformation<Semantics>>& transformations, double& prior)
 {
 	bool contains;
 	while (true) {
 		/* first ensure the rule is large enough */
-		if (!ensure_capacity<false>(r, rule_capacity))
+		if (!nonterminals.ensure_capacity(nonterminals.length + 1)
+		 || !transformations.ensure_capacity(transformations.length + 1))
 			return false;
 
 		if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "right-hand side nonterminal symbol"))
 			return false;
 		unsigned int id = G.nonterminal_names.get(tokens[index].text, contains);
 		if (!contains) {
-			read_error("Undefined nonterminal", tokens[index].start);
+			fprintf(stderr, "ERROR at %d:%d: Undefined nonterminal '", tokens[index].start.line, tokens[index].start.column);
+			print(tokens[index].text, stderr); print("'.\n", stderr);
 			return false;
 		}
 		index++;
 
-		if (!expect_token(tokens, index, GRAMMAR_COLON, "delimiting colon in right-hand side token"))
+		nonterminals[nonterminals.length++] = id;
+		if (!read_transformation(tokens, index, transformations[transformations.length]))
 			return false;
-		index++;
-
-		if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "semantic transformation function in right-hand side token"))
-			return false;
-		const grammar_token& transform = tokens[index];
-		index++;
-
-		r.nonterminals[r.length] = id;
-		if (!parse(r.functions[r.length], transform.text)) {
-			fprintf(stderr, "ERROR at %u:%u: Unrecognized semantic transform '",
-					transform.start.line, transform.start.column);
-			print(transform.text, stderr);
-			fprintf(stderr, "'.\n");
-			return false;
-		}
-		r.length++;
+		transformations.length++;
 
 		/* check for the end of the statement */
 		if (index == tokens.length) {
@@ -911,8 +959,7 @@ bool read_rule(const hdp_grammar<RulePrior, Semantics>& G,
 			break;
 		}
 	}
-
-	return trim<false>(r);
+	return true;
 }
 
 template<typename RulePrior, typename Semantics>
@@ -924,18 +971,32 @@ bool read_rule(
 {
 	auto& N = G.nonterminals[left - 1];
 
-	unsigned int rule_capacity = 4; double prior = 0.0;
-	rule<Semantics> new_rule = rule<Semantics>(rule_capacity);
-	new_rule.length = 0;
+	double prior = 0.0;
+	array<unsigned int> nonterminals(4);
 	if (N.rule_distribution.type == NONTERMINAL) {
-		if (!read_rule(G, tokens, index, new_rule, rule_capacity, prior))
+		array<transformation<Semantics>> transformations(4);
+		if (!read_rule(G, tokens, index, nonterminals, transformations, prior)) {
+			for (transformation<Semantics>& t : transformations) core::free(t);
 			return false;
-	} else {
-		if (!read_preterminal_rule(tokens, index, new_rule, names, rule_capacity))
-			return false;
-	}
+		}
 
-	return add_rule(N.rule_distribution, new_rule, prior);
+		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+		new_rule.length = nonterminals.length;
+		new_rule.nonterminals = nonterminals.data;
+		new_rule.transformations = transformations.data;
+		bool result = add_rule(N.rule_distribution, new_rule, prior);
+		for (transformation<Semantics>& t : transformations) core::free(t);
+		return result;
+	} else {
+		if (!read_preterminal_rule(tokens, index, nonterminals, names))
+			return false;
+
+		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+		new_rule.length = nonterminals.length;
+		new_rule.nonterminals = nonterminals.data;
+		new_rule.transformations = nullptr;
+		return add_rule(N.rule_distribution, new_rule, prior);
+	}
 }
 
 template<typename RulePrior, typename Semantics>
@@ -1070,7 +1131,6 @@ bool read_grammar(
 	/* interpret and construct the grammar */
 	if (!read(G, grammar_src, bytes_read, names)) {
 		free(grammar_src);
-		fprintf(stderr, "ERROR: Unable to parse specified grammar.\n");
 		return false;
 	}
 	free(grammar_src);

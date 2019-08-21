@@ -351,8 +351,6 @@ inline bool write(const terminal_prior<RulePrior>& prior, const Stream& stream)
 template<typename TerminalPrior, typename Semantics>
 bool sample(const terminal_prior<TerminalPrior>& prior, rule<Semantics>& output)
 {
-	typedef typename Semantics::function function;
-
 	sequence& tokens = *((sequence*) alloca(sizeof(sequence)));
 	while (true) {
 		if (!sample(prior.prior, tokens))
@@ -361,14 +359,8 @@ bool sample(const terminal_prior<TerminalPrior>& prior, rule<Semantics>& output)
 		free(tokens);
 	}
 	output.nonterminals = tokens.tokens;
-	output.functions = (function*) malloc(sizeof(function));
+	output.transformations = nullptr;
 	output.length = tokens.length;
-	if (output.functions == NULL) {
-		fprintf(stderr, "sample ERROR: Insufficient memory for terminal production rule.\n");
-		free(output.nonterminals);
-		return false;
-	}
-	output.functions[0] = Semantics::terminal_function();
 	return true;
 }
 
@@ -846,7 +838,7 @@ bool read(hdp_rule_distribution<RulePrior, Semantics>& distribution, Stream& str
 	 || (distribution.feature_count > 0 && distribution.feature_sequence == NULL)
 	 || !read(distribution.a, stream, distribution.h.depth)
 	 || !read(distribution.b, stream, distribution.h.depth)
-	 || !read(distribution.feature_sequence, stream, distribution.feature_count))
+	 || !Semantics::read(distribution.feature_sequence, stream, distribution.feature_count))
 	{
 		free(distribution.likelihood_cache); free(distribution.observations);
 		free(distribution.sampler); free(distribution.h); free(distribution.hdp_cache);
@@ -868,7 +860,7 @@ bool write(const hdp_rule_distribution<RulePrior, Semantics>& distribution, Stre
 		&& write(distribution.sampler, stream, atom_writer)
 		&& write(distribution.a, stream, distribution.h.depth)
 		&& write(distribution.b, stream, distribution.h.depth)
-		&& write(distribution.feature_sequence, stream, distribution.feature_count);
+		&& Semantics::write(distribution.feature_sequence, stream, distribution.feature_count);
 }
 
 template<typename Semantics>
@@ -1071,7 +1063,7 @@ const array<weighted_feature_set<double>>* log_conditional(
 		/* prune paths that don't contain the observation */
 		unsigned int* path = (unsigned int*) alloca(sizeof(unsigned int) * entry.key.feature_count);
 		for (unsigned int i = 0; PruneAmbiguousLogicalForms && i < distribution.feature_count; i++) {
-			if (!feature_pruneable(distribution.feature_sequence[i]))
+			if (!Semantics::is_feature_pruneable(distribution.feature_sequence[i]))
 				path[i] = IMPLICIT_NODE;
 			else path[i] = entry.key.features[i];
 		}
@@ -1318,8 +1310,15 @@ bool add_unobserved_rule(
 	array<rule<Semantics>>& rules, const rule<Semantics>& new_rule,
 	const typename Semantics::function& first, const typename Semantics::function& second)
 {
-	new_rule.functions[0] = first;
-	new_rule.functions[1] = second;
+#if !defined(NDEBUG)
+	if (new_rule.length != 2)
+		fprintf(stderr, "add_unobserved_rule WARNING: `new_rule` doesn't have length 2.\n");
+	if (new_rule.transformations[0].function_count != 1
+	 || new_rule.transformations[1].function_count != 1)
+		fprintf(stderr, "add_unobserved_rule WARNING: A transformation in `new_rule` doesn't have 1 function.\n");
+#endif
+	new_rule.transformations[0].functions[0] = first;
+	new_rule.transformations[1].functions[0] = second;
 	return add_unobserved_rule(distribution, rules, new_rule);
 }
 
@@ -1372,7 +1371,14 @@ bool get_rules(
 			if (pair.prior_probability + 1.0e-9 <= min_probability)
 				break;
 
-			rule<Semantics> new_rule = rule<Semantics>(2);
+			rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+			new_rule.length = 2;
+			new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
+			new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
+			new_rule.transformations[0].function_count = 1;
+			new_rule.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.transformations[0].function_count);
+			new_rule.transformations[1].function_count = 1;
+			new_rule.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.transformations[1].function_count);
 			new_rule.nonterminals[0] = pair.first;
 			new_rule.nonterminals[1] = pair.second;
 
@@ -1385,6 +1391,8 @@ bool get_rules(
 					return false;
 				}
 			}
+
+			free(new_rule);
 		}
 	}
 	free(max_likelihoods);
@@ -1401,14 +1409,21 @@ bool get_rules(hdp_rule_distribution<rule_prior<NonterminalPrior, TerminalPrior>
 	auto iterator = nonterminal_pair_iterator(nonterminal_prior);
 	while (iterator.has_next()) {
 		nonterminal_pair pair = iterator.next();
-		rule<Semantics> new_rule = rule<Semantics>(2);
+		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+		new_rule.length = 2;
+		new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
+		new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
+		new_rule.transformations[0].function_count = 1;
+		new_rule.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.transformations[0].function_count);
+		new_rule.transformations[1].function_count = 1;
+		new_rule.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.transformations[1].function_count);
 		new_rule.nonterminals[0] = pair.first;
 		new_rule.nonterminals[1] = pair.second;
 
 		for (unsigned int i = 0; i < array_length(Semantics::transformations); i++) {
 			const core::pair<function, function>& transformation = Semantics::transformations[i];
-			new_rule.functions[0] = transformation.key;
-			new_rule.functions[1] = transformation.value;
+			new_rule.transformations[0].functions[0] = transformation.key;
+			new_rule.transformations[1].functions[0] = transformation.value;
 
 			if (!rules.ensure_capacity(rules.length + 1)
 			 || !init(rules[(unsigned int) rules.length], new_rule))
@@ -1418,6 +1433,7 @@ bool get_rules(hdp_rule_distribution<rule_prior<NonterminalPrior, TerminalPrior>
 			}
 			rules.length++;
 		}
+		free(new_rule);
 	}
 	return true;
 }

@@ -195,6 +195,8 @@ template<typename BaseDistribution, typename Likelihood, typename Semantics>
 bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution,
 	const null_semantics& logical_form, array<rule<Semantics>>& rules, double min_probability)
 {
+	typedef typename Semantics::function function_type;
+
 	/* naively consider every possible rule */
 	/* TODO: this can obviously be made more efficient */
 	double log_min_probability = log(min_probability);
@@ -205,11 +207,17 @@ bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution,
 			if (log_conditional + 1.0e-9 > log_min_probability) {
 				if (!rules.ensure_capacity(rules.length + 1)) return false;
 				rule<Semantics>& new_rule = rules[(unsigned int) rules.length];
-				if (!init(new_rule, 2)) return false;
+				new_rule.length = 2;
+				new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
+				new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
+				new_rule.transformations[0].function_count = 1;
+				new_rule.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[0].function_count);
+				new_rule.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+				new_rule.transformations[1].function_count = 1;
+				new_rule.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[1].function_count);
+				new_rule.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
 				new_rule.nonterminals[0] = i + 1;
 				new_rule.nonterminals[1] = j + 1;
-				new_rule.functions[0] = null_semantics::FUNCTION_IDENTITY;
-				new_rule.functions[1] = null_semantics::FUNCTION_IDENTITY;
 				rules.length++;
 			}
 		}
@@ -218,17 +226,26 @@ bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution,
 }
 
 template<typename BaseDistribution, typename Likelihood, typename Semantics>
-bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution, array<rule<Semantics>>& rules) {
+bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution, array<rule<Semantics>>& rules)
+{
+	typedef typename Semantics::function function_type;
+
 	/* for now, just retrieve all rules */
 	for (unsigned int i = 0; i < distribution.nonterminal_count; i++) {
 		for (unsigned int j = 0; j < distribution.nonterminal_count; j++) {
 			if (!rules.ensure_capacity(rules.length + 1)) return false;
 			rule<Semantics>& new_rule = rules[(unsigned int) rules.length];
-			if (!init(new_rule, 2)) return false;
+			new_rule.length = 2;
+			new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
+			new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
+			new_rule.transformations[0].function_count = 1;
+			new_rule.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[0].function_count);
+			new_rule.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+			new_rule.transformations[1].function_count = 1;
+			new_rule.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[1].function_count);
+			new_rule.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
 			new_rule.nonterminals[0] = i + 1;
 			new_rule.nonterminals[1] = j + 1;
-			new_rule.functions[0] = null_semantics::FUNCTION_IDENTITY;
-			new_rule.functions[1] = null_semantics::FUNCTION_IDENTITY;
 			rules.length++;
 		}
 	}

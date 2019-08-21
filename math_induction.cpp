@@ -186,12 +186,21 @@ int main(int argc, const char** argv)
 	for (unsigned int i = 0; i < nonterminal_count; i++)
 		nonterminal_prior.phi[i] = 1.0 / nonterminal_count;
 	sparse_categorical<sequence, double> terminal_prior(4);
-	terminal_prior.set(new_sequence(&ADD, 1), 1.0 / 14);
-	terminal_prior.set(new_sequence(&SUBTRACT, 1), 1.0 / 14);
-	terminal_prior.set(new_sequence(&MULTIPLY, 1), 1.0 / 14);
-	terminal_prior.set(new_sequence(&DIVIDE, 1), 1.0 / 14);
-	for (unsigned int i = 0; i < 10; i++)
-		terminal_prior.set(new_sequence(&DIGITS[i], 1), 1.0 / 14);
+	sequence add_sequence = new_sequence(&ADD, 1);
+	sequence sub_sequence = new_sequence(&SUBTRACT, 1);
+	sequence mul_sequence = new_sequence(&MULTIPLY, 1);
+	sequence div_sequence = new_sequence(&DIVIDE, 1);
+	terminal_prior.set(add_sequence, 1.0 / 14);
+	terminal_prior.set(sub_sequence, 1.0 / 14);
+	terminal_prior.set(mul_sequence, 1.0 / 14);
+	terminal_prior.set(div_sequence, 1.0 / 14);
+	free(add_sequence); free(sub_sequence);
+	free(mul_sequence); free(div_sequence);
+	for (unsigned int i = 0; i < 10; i++) {
+		sequence num_sequence = new_sequence(&DIGITS[i], 1);
+		terminal_prior.set(num_sequence, 1.0 / 14);
+		free(num_sequence);
+	}
 
 	tree_semantics::feature label[] = {tree_semantics::FEATURE_LABEL};
 	tree_semantics::feature left_label[] = {tree_semantics::FEATURE_LABEL_LEFT};
@@ -271,7 +280,7 @@ int main(int argc, const char** argv)
 		for (unsigned int i = 0; i < sentence_count; i++) {
 			auto sentence = tokenized_sentence<tree_semantics>({
 				sentences[order[i]].data, (unsigned int) sentences[order[i]].length});
-			resample(syntax[order[i]], G, logical_forms[order[i]], sentence, NULL);
+			resample(syntax[order[i]], G, logical_forms[order[i]], sentence, dummy_morphology_parser(), NULL);
 			//resample_locally(syntax[order[i]], G, logical_forms[order[i]], 2);
 			//printf("Reparsing sentence %u (ID: %u)\n", i, order[i]); fflush(stdout);
 			//reparse<false>(syntax[order[i]], G, logical_forms[order[i]], sentence, NULL);
@@ -310,7 +319,7 @@ int main(int argc, const char** argv)
 				auto sentence = tokenized_sentence<tree_semantics>({
 					sentences[sentence_id].data, (unsigned int) sentences[sentence_id].length});
 				unsigned int derivation_count;
-				if (parse<false, false>(&parsed_syntax, derivation_count, logical_form, &logical_form_output, G, sentence, NULL)) {
+				if (parse<false, false>(&parsed_syntax, derivation_count, logical_form, &logical_form_output, G, sentence, dummy_morphology_parser(), NULL)) {
 					tree_semantics pruned_logical_form;
 					remove_wildcard_leaves(logical_form_output, pruned_logical_form);
 					print(pruned_logical_form, out, printer); print('\n', out);

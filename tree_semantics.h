@@ -220,42 +220,7 @@ struct tree_semantics {
 		FUNCTION_EMPTY = 0,
 		FUNCTION_IDENTITY = 1,
 		FUNCTION_LEFT = 2,
-		FUNCTION_RIGHT = 3,
-		FUNCTION_TERMINAL = 4
-	};
-
-	struct invert_iterator {
-		tree_semantics* inverse;
-
-		invert_iterator() { }
-
-		inline tree_semantics& get_next() {
-			return *inverse;
-		}
-
-		inline const tree_semantics& get_next() const {
-			return *inverse;
-		}
-
-		inline bool is_valid(hash_map<const tree_semantics*, unsigned int>& reference_counts) const {
-			return inverse->is_valid(reference_counts);
-		}
-
-		inline bool check_reference_counts(
-			const hash_map<const tree_semantics*, unsigned int>& reference_counts) const
-		{
-			return inverse->check_reference_counts(reference_counts);
-		}
-
-		static constexpr bool is_empty(const invert_iterator& inverter) {
-			return true;
-		}
-
-		static inline void free(invert_iterator& inverter) {
-			core::free(*inverter.inverse);
-			if (inverter.inverse->reference_count == 0)
-				core::free(inverter.inverse);
-		}
+		FUNCTION_RIGHT = 3
 	};
 
 	struct function {
@@ -275,6 +240,21 @@ struct tree_semantics {
 			f.type = FUNCTION_EMPTY;
 		}
 	};
+
+	template<typename Stream>
+	static inline bool print(const function& func, Stream& out) {
+		switch (func.type) {
+		case tree_semantics::FUNCTION_IDENTITY:
+			return core::print("identity", out);
+		case tree_semantics::FUNCTION_LEFT:
+			return core::print("left", out);
+		case tree_semantics::FUNCTION_RIGHT:
+			return core::print("right", out);
+		default:
+			fprintf(stderr, "print ERROR: Unrecognized tree_semantics::function type.\n");
+			return false;
+		}
+	}
 
 	inline void recompute_hash() {
 #if defined(PRECOMPUTE_HASH)
@@ -333,8 +313,12 @@ struct tree_semantics {
 		logical_form.free();
 	}
 
-	static constexpr function terminal_function() {
-		return FUNCTION_TERMINAL;
+	static constexpr function default_function() {
+		return FUNCTION_EMPTY;
+	}
+
+	static constexpr bool is_feature_pruneable(feature f) {
+		return true;
 	}
 
 	static const function functions[];
@@ -454,21 +438,6 @@ inline bool is_excluded(const tree_semantics& logical_form, unsigned int item) {
 	return is_excluded(logical_form.excluded, logical_form.excluded_count, item);
 }
 
-template<typename Stream>
-inline bool print(const tree_semantics::function& func, Stream& out) {
-	switch (func.type) {
-	case tree_semantics::FUNCTION_IDENTITY:
-		return print("identity", out);
-	case tree_semantics::FUNCTION_LEFT:
-		return print("left", out);
-	case tree_semantics::FUNCTION_RIGHT:
-		return print("right", out);
-	default:
-		fprintf(stderr, "print ERROR: Unrecognized tree_semantics::function type.\n");
-		return false;
-	}
-}
-
 template<typename Stream, typename Printer>
 inline bool print(const tree_semantics& tree, Stream& out, Printer& printer) {
 	bool success = true;
@@ -488,11 +457,6 @@ inline bool print(const tree_semantics& tree, Stream& out, Printer& printer) {
 		}
 	}
 	return success;
-}
-
-template<typename Stream, typename... Printer>
-inline bool print(const tree_semantics::invert_iterator& inverter, Stream& out, Printer&&... printer) {
-	return print(*inverter.inverse, out, std::forward<Printer>(printer)...);
 }
 
 template<typename Stream>
@@ -1321,20 +1285,23 @@ inline bool invert_function_right(tree_semantics*& dst,
 
 template<bool FirstReferenceable = true, bool SecondReferenceable = false>
 bool invert(
-	tree_semantics::invert_iterator& inverter,
+	tree_semantics*& inverse,
+	unsigned int& inverse_count,
 	tree_semantics::function function,
-	const tree_semantics& first, const tree_semantics& second)
+	const tree_semantics& first,
+	const tree_semantics& second)
 {
 	bool result;
+	inverse_count = 1;
 	switch (function.type) {
 	case tree_semantics::FUNCTION_IDENTITY:
 		result = intersect<FirstReferenceable, SecondReferenceable>(
-				inverter.inverse, &first, &second);
-		return (result && inverter.inverse != NULL);
+				inverse, &first, &second);
+		return (result && inverse != NULL);
 	case tree_semantics::FUNCTION_LEFT:
-		return invert_function_left<SecondReferenceable>(inverter.inverse, first, second);
+		return invert_function_left<SecondReferenceable>(inverse, first, second);
 	case tree_semantics::FUNCTION_RIGHT:
-		return invert_function_right<SecondReferenceable>(inverter.inverse, first, second);
+		return invert_function_right<SecondReferenceable>(inverse, first, second);
 	default:
 		fprintf(stderr, "invert ERROR: Invalid transformation function.\n");
 		exit(EXIT_FAILURE);
@@ -1370,14 +1337,6 @@ inline bool set_string(tree_semantics& exp, const tree_semantics& set, const seq
 	fprintf(stderr, "set_string ERROR: This is unimplemented for tree_semantics.\n");
 	return false;
 }
-
-
-inline bool next(const tree_semantics::invert_iterator& inverter, tree_semantics& dst) {
-	dst = *inverter.inverse;
-	return true;
-}
-
-inline void operator ++ (tree_semantics::invert_iterator& inverter, int i) { }
 
 inline unsigned int get_label(const tree_semantics& src,
 	unsigned int*& excluded, unsigned int& excluded_count)
@@ -1609,11 +1568,7 @@ inline bool exclude_features(
 	}
 }
 
-constexpr bool feature_pruneable(tree_semantics::feature feature) {
-	return true;
-}
-
-inline unsigned char get_selected(const tree_semantics::function& function) {
+static inline unsigned char get_selected(const tree_semantics::function& function) {
 	switch (function.type) {
 	case tree_semantics::FUNCTION_LEFT:
 		return 1;
@@ -1623,30 +1578,36 @@ inline unsigned char get_selected(const tree_semantics::function& function) {
 		return 3;
 
 	case tree_semantics::FUNCTION_EMPTY:
-	case tree_semantics::FUNCTION_TERMINAL:
 		break;
 	}
-	fprintf(stderr, "is_separable ERROR: Unrecognized function.\n");
+	fprintf(stderr, "get_selected ERROR: Unrecognized function.\n");
 	exit(EXIT_FAILURE);
 }
 
 void is_separable(
-		const tree_semantics::function* functions,
+		const transformation<tree_semantics>* const transformations,
 		unsigned int rule_length, bool* separable)
 {
 	unsigned char selected = 0; /* 0 is none, 1 is left, 2 is right, 3 is both */
 	for (unsigned int i = 0; i < rule_length; i++) {
-		unsigned int next = get_selected(functions[i]);
+		if (transformations[i].function_count != 1) {
+			/* we current don't support transformations with more than one function */
+			separable[i] = false;
+			continue;
+		}
+
+		unsigned int next = get_selected(transformations[i].functions[0]);
 		if ((next & selected) == 0)
 			separable[i] = true;
 		else separable[i] = false;
 
-		selected |= get_selected(functions[i]);
+		selected |= get_selected(transformations[i].functions[0]);
 	}
 }
 
 template<typename EmitRootFunction, typename PartOfSpeechType>
-inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
+inline bool morphology_parse(
+		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const tree_semantics& logical_form, EmitRootFunction emit_root)
 {
 	return emit_root(words, logical_form);
@@ -1654,6 +1615,7 @@ inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
 
 template<typename PartOfSpeechType>
 constexpr bool morphology_is_valid(
+		const dummy_morphology_parser& morph,
 		const sequence& terminal, PartOfSpeechType pos,
 		const tree_semantics& logical_form)
 {
@@ -1749,50 +1711,58 @@ bool initialize_tree(
 	/* pick a random split point from {1, ..., n - 1} */
 	unsigned int k = sample_uniform(sentence.length - 1) + 1;
 
-	rule<tree_semantics> branch = rule<tree_semantics>(2);
-	if (!random_transformation(logical_form, branch.functions[0], branch.functions[1])) {
+	rule<tree_semantics>& branch = *((rule<tree_semantics>*) alloca(sizeof(rule<tree_semantics>)));
+	branch.length = 2;
+	branch.transformations = (transformation<tree_semantics>*) malloc(sizeof(transformation<tree_semantics>) * branch.length);
+	branch.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.length);
+	branch.transformations[0].function_count = 1;
+	branch.transformations[0].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.transformations[0].function_count);
+	branch.transformations[1].function_count = 1;
+	branch.transformations[1].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.transformations[1].function_count);
+	if (!random_transformation(logical_form, branch.transformations[0].functions[0], branch.transformations[1].functions[0])) {
 		free(tree); tree = NULL;
-		return false;
+		free(branch); return false;
 	}
 
 	if (k == 1) {
 		if (!sample_preterminal(G, {sentence.tokens, k}, branch.nonterminals[0])) {
 			free(tree); tree = NULL;
-			return false;
+			free(branch); return false;
 		}
 	} else {
 		if (!sample_nonterminal(G, branch.nonterminals[0])) {
 			free(tree); tree = NULL;
-			return false;
+			free(branch); return false;
 		}
 	}
 
 	if (sentence.length - k == 1) {
 		if (!sample_preterminal(G, {sentence.tokens + k, sentence.length - k}, branch.nonterminals[1])) {
 			free(tree); tree = NULL;
-			return false;
+			free(branch); return false;
 		}
 	} else {
 		if (!sample_nonterminal(G, branch.nonterminals[1])) {
 			free(tree); tree = NULL;
-			return false;
+			free(branch); return false;
 		}
 	}
 
-	const tree_semantics* left = apply(branch.functions[0], logical_form);
-	const tree_semantics* right = apply(branch.functions[1], logical_form);
+	const tree_semantics* left = apply(branch.transformations[0].functions[0], logical_form);
+	const tree_semantics* right = apply(branch.transformations[1].functions[0], logical_form);
 	if (!init(*tree, branch)) exit(EXIT_FAILURE);
 	if (!initialize_tree(G, tree->children[0], { sentence.tokens, k }, *left, branch.nonterminals[0])) {
 		free(*tree); free(tree);
-		tree = NULL;
+		tree = NULL; free(branch);
 		return false;
 	} else if (!initialize_tree(G, tree->children[1],
 			{ sentence.tokens + k, sentence.length - k }, *right, branch.nonterminals[1]))
 	{
 		free(*tree); free(tree);
-		tree = NULL;
+		tree = NULL; free(branch);
 		return false;
 	}
+	free(branch);
 	return true;
 }
 

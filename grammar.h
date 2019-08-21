@@ -21,6 +21,11 @@
 
 using namespace core;
 
+/* forward declarations */
+
+template<typename Semantics> struct syntax_node;
+
+
 template<typename T>
 struct weighted {
 	T object;
@@ -50,20 +55,181 @@ inline bool operator < (
 	return first.log_probability > second.log_probability;
 }
 
+template<typename Semantics>
+struct transformation {
+	typedef typename Semantics::function function;
+
+	function* functions;
+	unsigned int function_count;
+
+	static inline unsigned int hash(const transformation<Semantics>& t) {
+		unsigned int hash_value = default_hash(t.function_count);
+		for (unsigned int i = 0; i < t.function_count; i++)
+			hash_value ^= hasher<function>::hash(t.functions[i]);
+		return hash_value;
+	}
+
+	static inline void free(transformation<Semantics>& t) {
+		core::free(t.functions);
+	}
+};
+
+template<typename Semantics>
+inline bool init(transformation<Semantics>& t, const transformation<Semantics>& src) {
+	typedef typename Semantics::function function;
+	t.function_count = src.function_count;
+	t.functions = (function*) malloc(max((size_t) 1, sizeof(function) * src.function_count));
+	if (t.functions == nullptr) {
+		fprintf(stderr, "init ERROR: Insufficient memory for `transformation.functions`.\n");
+		return false;
+	}
+	for (unsigned int i = 0; i < src.function_count; i++)
+		t.functions[i] = src.functions[i];
+	return true;
+}
+
+template<typename Semantics>
+inline bool operator != (
+	const transformation<Semantics>& first,
+	const transformation<Semantics>& second)
+{
+	if (first.function_count != second.function_count) return true;
+	for (unsigned int i = 0; i < first.function_count; i++)
+		if (first.functions[i] != second.functions[i]) return true;
+	return false;
+}
+
+template<typename Semantics>
+inline bool operator < (
+	const transformation<Semantics>& first,
+	const transformation<Semantics>& second)
+{
+	if (first.function_count < second.function_count) return true;
+	else if (first.function_count > second.function_count) return false;
+	for (unsigned int i = 0; i < first.function_count; i++) {
+		if (first.functions[i] < second.functions[i]) return true;
+		else if (second.functions[i] < first.functions[i]) return false;
+	}
+	return false;
+}
+
+template<typename Semantics, typename Stream>
+inline bool read(transformation<Semantics>& t, Stream& in) {
+	typedef typename Semantics::function function;
+	if (!read(t.function_count, in)) return false;
+	t.functions = (function*) malloc(max((size_t) 1, sizeof(function) * t.function_count));
+	if (t.functions == nullptr) return false;
+	if (!Semantics::read(t.functions, in, t.function_count)) {
+		free(t.functions);
+		return false;
+	}
+	return true;
+}
+
+template<typename Semantics, typename Stream>
+inline bool write(const transformation<Semantics>& t, Stream& out) {
+	return write(t.function_count, out)
+		&& Semantics::write(t.functions, out, t.function_count);
+}
+
+template<typename Semantics, typename Stream>
+inline bool print(const transformation<Semantics>& t, Stream& out) {
+	if (t.function_count == 0) return true;
+	if (!Semantics::print(t.functions[0], out)) return false;
+	for (unsigned int i = 1; i < t.function_count; i++) {
+		if (!print(',', out) || !Semantics::print(t.functions[i], out)) return false;
+	}
+	return true;
+}
+
+template<typename Semantics>
+inline bool apply(
+	const transformation<Semantics>& t,
+	const Semantics& src, Semantics& out)
+{
+	if (!apply(t.functions[0], src, out)) return false;
+	Semantics& temp = *((Semantics*) alloca(sizeof(Semantics)));
+	for (unsigned int i = 1; i < t.function_count; i++) {
+		swap(out, temp);
+		if (!apply(t.functions[i], temp, out)) {
+			free(temp);
+			return false;
+		}
+		free(temp);
+	}
+	return true;
+}
+
+template<typename Semantics>
+inline bool invert(
+	Semantics*& inverse, unsigned int& inverse_count,
+	const transformation<Semantics>& t,
+	const Semantics& first, const Semantics& second)
+{
+	/* apply the function forward first */
+	Semantics* outputs = (Semantics*) malloc(max((size_t) 1, sizeof(Semantics) * t.function_count));
+	if (outputs == nullptr) {
+		fprintf(stderr, "invert ERROR: Out of memory.\n");
+		return false;
+	}
+	outputs[0] = first;
+	for (unsigned int i = 1; i < t.function_count; i++) {
+		if (!apply(t.functions[i - 1], outputs[i - 1], outputs[i])) {
+			for (unsigned int k = 0; k < i; k++) free(outputs[k]);
+			free(outputs); return false;
+		}
+	}
+
+	unsigned int count;
+	array<Semantics>& old_inverse = *((array<Semantics>*) alloca(sizeof(array<Semantics>)));
+	if (!invert(old_inverse.data, count, t.functions[t.function_count - 1], outputs[t.function_count - 1], second)) {
+		for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
+		free(outputs); return false;
+	}
+	old_inverse.length = count;
+	old_inverse.capacity = count;
+	for (unsigned int i = t.function_count - 1; i > 0; i--)
+	{
+		array<Semantics> new_inverse(1 << (core::log2(old_inverse.length) + 1));
+		for (unsigned int j = 0; j < old_inverse.length; j++) {
+			Semantics* next_inverse; unsigned int next_inverse_count;
+			if (!invert(next_inverse, next_inverse_count, t.functions[i - 1], outputs[i - 1], old_inverse[j])) {
+				for (unsigned int k = 0; k < new_inverse.length; k++) free(new_inverse[k]);
+				for (unsigned int k = 0; k < old_inverse.length; k++) free(old_inverse[k]);
+				for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
+				free(outputs); free(old_inverse); return false;
+			} else if (!new_inverse.ensure_capacity(new_inverse.length + next_inverse_count)) {
+				for (unsigned int k = 0; k < new_inverse.length; k++) free(new_inverse[k]);
+				for (unsigned int k = 0; k < old_inverse.length; k++) free(old_inverse[k]);
+				for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
+				for (unsigned int k = 0; k < next_inverse_count; k++) free(next_inverse[k]);
+				free(outputs); free(old_inverse); free(next_inverse); return false;
+			}
+			for (unsigned int k = 0; k < next_inverse_count; k++) {
+				new_inverse[new_inverse.length++] = next_inverse[k];
+				free(next_inverse[k]);
+			}
+			free(next_inverse);
+		}
+
+		for (unsigned int k = 0; k < old_inverse.length; k++) free(old_inverse[k]);
+		swap(old_inverse, new_inverse);
+	}
+
+	for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
+	free(outputs);
+	resize(old_inverse.data, old_inverse.length);
+	inverse = old_inverse.data;
+	inverse_count = old_inverse.length;
+	return true;
+}
+
 /* Represents a production rule in the semantic grammar. */
 template<typename Semantics>
 struct rule {
-	typedef typename Semantics::function function;
-
 	unsigned int* nonterminals;
-	function* functions;
+	transformation<Semantics>* transformations;
 	unsigned int length;
-
-	/* constructs an empty rule */
-	rule(unsigned int length) : length(length) {
-		if (!initialize())
-			exit(EXIT_FAILURE);
-	}
 
 	rule(const rule<Semantics>& src) : length(src.length) {
 		if (!initialize(src, src.length))
@@ -80,6 +246,31 @@ struct rule {
 			exit(EXIT_FAILURE);
 	}
 
+	rule(const syntax_node<Semantics>* const* terminals, unsigned int terminal_count) :
+			transformations(nullptr), length(0)
+	{
+#if !defined(NDEBUG)
+		if (terminal_count == 0)
+			fprintf(stderr, "rule WARNING: `length` is zero.\n");
+#endif
+
+		unsigned int total_length = 0;
+		for (unsigned int i = 0; i < terminal_count; i++) {
+#if !defined(NDEBUG)
+			/* check if the children are terminal tokens */
+			if (!terminals[i]->right.is_terminal())
+				fprintf(stderr, "rule WARNING: This constructor should only be used with sequences of terminals.\n");
+#endif
+			total_length += terminals[i]->right.length;
+		}
+
+		nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * total_length);
+		if (nonterminals == nullptr) exit(EXIT_FAILURE);
+		for (unsigned int i = 0; i < terminal_count; i++)
+			for (unsigned int j = 0; j < terminals[i]->right.length; j++)
+				nonterminals[length++] = terminals[i]->right.nonterminals[j];
+	}
+
 	~rule() { free(); }
 
 	inline void operator = (const rule<Semantics>& src) {
@@ -89,7 +280,7 @@ struct rule {
 	}
 
 	inline bool is_terminal() const {
-		return functions[0] == Semantics::terminal_function();
+		return transformations == nullptr;
 	}
 
 	inline const sequence get_terminal() const {
@@ -100,13 +291,13 @@ struct rule {
 		unsigned int hash = default_hash(rule.nonterminals, rule.length);
 		if (rule.is_terminal()) return hash;
 		for (unsigned int i = 0; i < rule.length; i++)
-			hash ^= hasher<function>::hash(rule.functions[i]);
+			hash ^= hasher<transformation<Semantics>>::hash(rule.transformations[i]);
 		return hash;
 	}
 
 	static inline void move(const rule<Semantics>& src, rule<Semantics>& dst) {
 		dst.nonterminals = src.nonterminals;
-		dst.functions = src.functions;
+		dst.transformations = src.transformations;
 		dst.length = src.length;
 	}
 
@@ -116,16 +307,16 @@ struct rule {
 
 	static inline void swap(rule<Semantics>& first, rule<Semantics>& second) {
 		core::swap(first.nonterminals, second.nonterminals);
-		core::swap(first.functions, second.functions);
+		core::swap(first.transformations, second.transformations);
 		core::swap(first.length, second.length);
 	}
 
 	static inline bool is_empty(const rule<Semantics>& rule) {
-		return rule.nonterminals == NULL;
+		return rule.nonterminals == nullptr;
 	}
 
 	static inline void set_empty(rule<Semantics>& rule) {
-		rule.nonterminals = NULL;
+		rule.nonterminals = nullptr;
 	}
 
 	static inline void set_empty(rule<Semantics>* rules, unsigned int count) {
@@ -138,43 +329,56 @@ struct rule {
 
 private:
 	/* NOTE: this function assumes 'length' was initialized */
-	bool initialize() {
+	bool initialize(const rule<Semantics>& src, unsigned int new_length) {
+		nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * length));
+		if (nonterminals == nullptr) {
+			fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.nonterminals`.\n");
+			return false;
+		}
+
+		for (unsigned int i = 0; i < src.length; i++)
+			nonterminals[i] = src.nonterminals[i];
+		if (src.is_terminal()) {
+			transformations = nullptr;
+		} else {
+			transformations = (transformation<Semantics>*) malloc(
+					max((size_t) 1, sizeof(transformation<Semantics>) * length));
+			if (transformations == nullptr) {
+				fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.transformations`.\n");
+				core::free(nonterminals); return false;
+			}
+			for (unsigned int i = 0; i < src.length; i++) {
+				if (!init(transformations[i], src.transformations[i])) {
+					fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.transformations[%u]`.\n", i);
+					for (unsigned int j = 0; j < i; j++) core::free(transformations[j]);
+					core::free(transformations); core::free(nonterminals);
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/* NOTE: this function assumes 'length' was initialized */
+	bool initialize(const sequence& terminal) {
 		nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * length));
 		if (nonterminals == NULL) {
 			fprintf(stderr, "rule.initialize ERROR: Out of memory.\n");
 			return false;
 		}
-		functions = (function*) malloc(max((size_t) 1, sizeof(function) * length));
-		if (functions == NULL) {
-			core::free(nonterminals);
-			fprintf(stderr, "rule.initilize ERROR: Out of memory.\n");
-			return false;
-		}
-		return true;
-	}
-
-	bool initialize(const rule<Semantics>& src, unsigned int new_length) {
-		if (!initialize()) return false;
-		if (src.length == 0) return true;
-		memcpy(nonterminals, src.nonterminals, sizeof(unsigned int) * src.length);
-		if (src.is_terminal()) {
-			functions[0] = Semantics::terminal_function();
-		} else {
-			memcpy(functions, src.functions, sizeof(function) * src.length);
-		}
-		return true;
-	}
-
-	bool initialize(const sequence& terminal) {
-		if (!initialize()) return false;
-		functions[0] = Semantics::terminal_function();
-		memcpy(nonterminals, terminal.tokens, sizeof(unsigned int) * length);
+		transformations = nullptr;
+		for (unsigned int i = 0; i < terminal.length; i++)
+			nonterminals[i] = terminal.tokens[i];
 		return true;
 	}
 
 	inline void free() {
 		core::free(nonterminals);
-		core::free(functions);
+		if (transformations != nullptr) {
+			for (unsigned int i = 0; i < length; i++)
+				core::free(transformations[i]);
+			core::free(transformations);
+		}
 	}
 
 	template<typename A> friend bool init(rule<A>&, unsigned int);
@@ -182,12 +386,6 @@ private:
 	template<typename A> friend bool init(rule<A>&, const sequence&);
 	template<typename A, typename B> friend bool read(rule<A>&, B&, hash_map<string, unsigned int>&);
 };
-
-template<typename Semantics>
-inline bool init(rule<Semantics>& rule, unsigned int length) {
-	rule.length = length;
-	return rule.initialize();
-}
 
 template<typename Semantics>
 inline bool init(rule<Semantics>& dst, const rule<Semantics>& src, unsigned int new_length) {
@@ -222,7 +420,7 @@ inline bool operator == (const rule<Semantics>& first, const rule<Semantics>& se
 
 	/* compare function list */
 	for (unsigned int i = 0; i < first.length; i++)
-		if (first.functions[i] != second.functions[i]) return false;
+		if (first.transformations[i] != second.transformations[i]) return false;
 	return true;
 }
 
@@ -251,8 +449,8 @@ inline bool operator < (const rule<Semantics>& first, const rule<Semantics>& sec
 	if (!first.is_terminal()) {
 		/* compare the transformation functions */
 		for (unsigned int i = 0; i < first.length; i++) {
-			if (first.functions[i] < second.functions[i]) return true;
-			else if (second.functions[i] < first.functions[i]) return false;
+			if (first.transformations[i] < second.transformations[i]) return true;
+			else if (second.transformations[i] < first.transformations[i]) return false;
 		}
 	}
 
@@ -266,7 +464,7 @@ inline bool print(const rule<Semantics>& r, Stream& out, pair<AtomPrinter&, Nont
 	if (!print('(', out)) return false;
 	for (unsigned int i = 0; i < r.length; i++) {
 		if (i > 0 && !print(' ', out)) return false;
-		if (!print(r.nonterminals[i], out, printers.value) || !print(':', out) || !print(r.functions[i], out))
+		if (!print(r.nonterminals[i], out, printers.value) || !print(':', out) || !print(r.transformations[i], out))
 			return false;
 	}
 	return print(')', out);
@@ -275,24 +473,28 @@ inline bool print(const rule<Semantics>& r, Stream& out, pair<AtomPrinter&, Nont
 template<typename Semantics, typename Stream>
 bool read(rule<Semantics>& r, Stream& stream, hash_map<string, unsigned int>& token_map)
 {
-	if (!read(r.length, stream)
-	 || !r.initialize())
+	bool is_terminal;
+	if (!read(r.length, stream) || !read(is_terminal, stream))
 		return false;
-	if (!read(r.functions[0], stream)) {
-		r.free();
+	r.nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * r.length));
+	if (r.nonterminals == nullptr) {
+		fprintf(stderr, "read ERROR: Insufficient memory for `rule.nonterminals`.\n");
+		return false;
+	} if (!read(r.nonterminals, stream, r.length)) {
+		core::free(r.nonterminals);
 		return false;
 	}
-	if (r.functions[0] == Semantics::terminal_function()) {
-		for (unsigned int i = 0; i < r.length; i++) {
-			if (!read(r.nonterminals[i], stream, token_map)) {
-				r.free();
-				return false;
-			}
-		}
+
+	if (is_terminal) {
+		r.transformations = nullptr;
 	} else {
-		if (!read(r.functions + 1, stream, r.length - 1)
-		 || !read(r.nonterminals, stream, r.length)) {
-			r.free();
+		r.transformations = (transformation<Semantics>*) malloc(
+				max((size_t) 1, sizeof(transformation<Semantics>) * r.length));
+		if (r.transformations == nullptr) {
+			fprintf(stderr, "read ERROR: Insufficient memory for `rule.transformations`.\n");
+			core::free(r.nonterminals); return false;
+		} if (!read(r.transformations, stream, r.length)) {
+			core::free(r.nonterminals); core::free(r.transformations);
 			return false;
 		}
 	}
@@ -302,17 +504,14 @@ bool read(rule<Semantics>& r, Stream& stream, hash_map<string, unsigned int>& to
 template<typename Semantics, typename Stream>
 bool write(const rule<Semantics>& r, Stream& stream, const string** token_map)
 {
-	if (!write(r.length, stream)) return false;
-	if (r.functions[0] == Semantics::terminal_function()) {
-		if (!write(r.functions, stream, 1)) return false;
-		for (unsigned int i = 0; i < r.length; i++) {
-			if (!write(r.nonterminals[i], stream, token_map))
-				return false;
-		}
+	if (!write(r.length, stream)
+	 || !write(r.is_terminal(), stream)
+	 || !write(r.nonterminals, stream, r.length))
+		return false;
+	if (r.is_terminal()) {
 		return true;
 	} else {
-		return write(r.functions, stream, r.length)
-			&& write(r.nonterminals, stream, r.length);
+		return write(r.transformations, stream, r.length);
 	}
 }
 
@@ -540,11 +739,8 @@ struct syntax_node {
 	syntax_node(const sequence& terminal) : right(terminal), children(NULL), reference_count(1) { }
 
 	syntax_node(const syntax_node<Semantics>* const* terminals, unsigned int length) :
-		right(length), children(NULL), reference_count(1)
-	{
-		if (!initialize(terminals, length))
-			exit(EXIT_FAILURE);
-	}
+		right(terminals, length), children(NULL), reference_count(1)
+	{ }
 
 	syntax_node(const syntax_node<Semantics>& src) :
 		right(src.right), reference_count(1)
@@ -669,19 +865,6 @@ private:
 			if (children[i] != NULL)
 				children[i]->reference_count++;
 		}
-		return true;
-	}
-
-	inline bool initialize(const syntax_node<Semantics>* const* terminals, unsigned int length)
-	{
-#if !defined(NDEBUG)
-		if (length == 0)
-			fprintf(stderr, "init WARNING: In initializing syntax_node, length is zero.\n");
-#endif
-		/* check if the children are terminal tokens */
-		right.functions[0] = Semantics::terminal_function();
-		for (unsigned int i = 0; i < length; i++)
-			right.nonterminals[i] = terminals[i]->right.nonterminals[0];
 		return true;
 	}
 
@@ -821,7 +1004,7 @@ bool print(const syntax_node<Semantics>& node, Stream& out, unsigned int indent,
 		for (unsigned int i = 0; i < node.right.length; i++) {
 			success &= print('\n', out) && print_indent(indent + 1, out);
 			success &= print('(', out) && print(node.right.nonterminals[i], out, nonterminal_printer);
-			success &= print(':', out) && print(node.right.functions[i], out);
+			success &= print(':', out) && print(node.right.transformations[i], out);
 			if (node.children[i] == NULL) {
 				success &= print(" <null>", out);
 			} else {
@@ -910,9 +1093,9 @@ bool yield(const grammar<Semantics, Distribution>& G,
 
 	for (unsigned int i = 0; i < node.right.length; i++) {
 		Semantics transformed;
-		if (!apply(node.right.functions[i], logical_form, transformed)) {
+		if (!apply(node.right.transformations[i], logical_form, transformed)) {
 			print("yield ERROR: Unable to apply semantic transformation '", stderr);
-			print(node.right.functions[i], stderr); print("' to logical form:\n", stderr);
+			print(node.right.transformations[i], stderr); print("' to logical form:\n", stderr);
 			print(logical_form, stderr, printer); print('\n', stderr); return false;
 		}
 		if (!yield(G, *node.children[i], node.right.nonterminals[i], transformed, printer, std::forward<OutputType>(output)...))
@@ -981,17 +1164,13 @@ bool log_probability(double& score,
 {
 	const rule<Semantics>& r = syntax.right;
 	double rule_score = log_probability(G, r, logical_form, token_map, nonterminal_id);
-extern bool debug2;
-if (debug2) {
-print(G.nonterminals[nonterminal_id - 1].name, stderr); fprintf(stderr, "\t%lf\n", rule_score);
-}
 	score += rule_score;
 
 	if (r.is_terminal()) return true;
 	for (unsigned int i = 0; i < r.length; i++) {
 		Semantics transformed;
 		if (syntax.children[i] == NULL) continue;
-		if (!apply(r.functions[i], logical_form, transformed))
+		if (!apply(r.transformations[i], logical_form, transformed))
 			return false;
 		else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nonterminals[i]))
 			return false;
@@ -1066,9 +1245,9 @@ bool add_tree(unsigned int nonterminal_id,
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.functions[i], logical_form, transformed)) {
+		if (!apply(syntax.right.transformations[i], logical_form, transformed)) {
 			print("add_tree ERROR: Unable to apply semantic transformation function '", stderr);
-			print(syntax.right.functions[i], stderr); print("' to the logical form:\n", stderr);
+			print(syntax.right.transformations[i], stderr); print("' to the logical form:\n", stderr);
 			print(logical_form, stderr, printer); print('\n', stderr); return false;
 		} if (!add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, printer))
 			return false;
@@ -1103,7 +1282,7 @@ bool remove_tree(unsigned int nonterminal_id,
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.functions[i], logical_form, transformed)
+		if (!apply(syntax.right.transformations[i], logical_form, transformed)
 		 || !remove_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G))
 			return false;
 	}
@@ -1131,7 +1310,7 @@ bool add_tree(unsigned int nonterminal_id,
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.functions[i], logical_form, transformed)
+		if (!apply(syntax.right.transformations[i], logical_form, transformed)
 		 || !add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
@@ -1159,7 +1338,7 @@ bool remove_tree(unsigned int nonterminal_id,
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.functions[i], logical_form, transformed)
+		if (!apply(syntax.right.transformations[i], logical_form, transformed)
 		 || !remove_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
@@ -1200,7 +1379,7 @@ inline int sample(
 		}
 		for (unsigned int i = 0; i < syntax->right.length; i++) {
 			Semantics transformed;
-			if (!apply(syntax->right.functions[i], logical_form, transformed)) {
+			if (!apply(syntax->right.transformations[i], logical_form, transformed)) {
 				free(*syntax); free(syntax);
 				syntax = NULL;
 				return 1;
@@ -1248,15 +1427,15 @@ bool is_parseable(
 	if (!syntax.right.is_terminal()) {
 		for (unsigned int i = 0; i < syntax.right.length; i++) {
 			Semantics child_logical_form, child_logical_form_set;
-			if (!apply(syntax.right.functions[i], logical_form_set, child_logical_form_set)) {
+			if (!apply(syntax.right.transformations[i], logical_form_set, child_logical_form_set)) {
 				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
-				print(syntax.right.functions[i], stderr); print("' to logical form set ", stderr);
+				print(syntax.right.transformations[i], stderr); print("' to logical form set ", stderr);
 				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				return false;
-			} else if (!apply(syntax.right.functions[i], logical_form, child_logical_form)) {
+			} else if (!apply(syntax.right.transformations[i], logical_form, child_logical_form)) {
 				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
-				print(syntax.right.functions[i], stderr); print("' to ground truth logical form ", stderr);
+				print(syntax.right.transformations[i], stderr); print("' to ground truth logical form ", stderr);
 				print(logical_form, stderr, printers.key); print(" at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				free(child_logical_form_set);
@@ -1266,7 +1445,7 @@ bool is_parseable(
 			double child_prior = log_probability<false>(child_logical_form_set);
 			if (child_prior == -std::numeric_limits<double>::infinity()) {
 				print("is_parseable ERROR: The prior is -inf after applying semantic transformation function '", stderr);
-				print(syntax.right.functions[i], stderr); print("' to logical form set ", stderr);
+				print(syntax.right.transformations[i], stderr); print("' to logical form set ", stderr);
 				print(logical_form_set, stderr, printers.key); print(" to obtain logical form set ", stderr);
 				print(child_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
@@ -1280,10 +1459,10 @@ bool is_parseable(
 
 			/* invert the child logical form set */
 			/* TODO: make this work with more general invert iterators */
-			typename Semantics::invert_iterator inverter;
-			if (!invert(inverter, syntax.right.functions[i], logical_form_set, child_logical_form_set)) {
+			Semantics* inverse; unsigned int inverse_count;
+			if (!invert(inverse, inverse_count, syntax.right.transformations[i], logical_form_set, child_logical_form_set) || inverse_count == 0) {
 				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
-				print(syntax.right.functions[i], stderr); print("' at rule: ", stderr);
+				print(syntax.right.transformations[i], stderr); print("' at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				print("Tried to invert ", stderr); print(child_logical_form_set, stderr, printers.key);
 				print(" and intersect with ", stderr); print(logical_form_set, stderr, printers.key); print(".\n", stderr);
@@ -1292,13 +1471,13 @@ bool is_parseable(
 			}
 			free(child_logical_form_set);
 			free(logical_form_set);
-			logical_form_set = *inverter.inverse;
-			free(inverter);
+			logical_form_set = inverse[0];
+			free(inverse);
 
 			double new_prior = log_probability<false>(logical_form_set);
 			if (new_prior > prior || new_prior > child_prior || new_prior == -std::numeric_limits<double>::infinity()) {
 				print("is_parseable ERROR: The prior is not monotonic after inverting semantic transformation function '", stderr);
-				print(syntax.right.functions[i], stderr); print("' to obtain logical form set ", stderr);
+				print(syntax.right.transformations[i], stderr); print("' to obtain logical form set ", stderr);
 				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				return false;
@@ -1371,8 +1550,7 @@ struct null_semantics {
 
 	enum function_type {
 		FUNCTION_EMPTY = 0,
-		FUNCTION_IDENTITY = 1,
-		FUNCTION_TERMINAL = 2
+		FUNCTION_IDENTITY = 1
 	};
 
 	struct function {
@@ -1393,20 +1571,19 @@ struct null_semantics {
 		}
 	};
 
-	struct invert_iterator {
-		constexpr null_semantics get_next() const {
-			return null_semantics();
+	template<typename Stream>
+	static inline bool print(const function& f, Stream& out) {
+		switch (f.type) {
+		case null_semantics::FUNCTION_IDENTITY:
+			return core::print("identity", out);
+		default:
+			fprintf(stderr, "print ERROR: Unrecognized null_semantics::function type.\n");
+			return false;
 		}
+	}
 
-		static constexpr bool is_empty(const invert_iterator& inverter) {
-			return true;
-		}
-
-		static inline void free(invert_iterator& inverter) { }
-	};
-
-	static inline function terminal_function() {
-		return FUNCTION_TERMINAL;
+	static inline function default_function() {
+		return FUNCTION_EMPTY;
 	}
 
 	static constexpr bool initialize_any(const null_semantics& logical_form) { return true; };
@@ -1415,8 +1592,6 @@ struct null_semantics {
 	static inline void swap(null_semantics& src, null_semantics& dst) { }
 	static inline void free(const null_semantics& logical_form) { }
 };
-
-inline void operator ++ (null_semantics::invert_iterator& inverter, int i) { }
 
 constexpr bool operator == (const null_semantics& first, const null_semantics& second) {
 	return true;
@@ -1434,24 +1609,8 @@ constexpr bool operator != (const null_semantics::function& first, const null_se
 	return first.type != second.type;
 }
 
-template<typename Stream>
-inline bool print(const null_semantics::function& function, Stream& out) {
-	switch (function.type) {
-	case null_semantics::FUNCTION_IDENTITY:
-		return print("identity", out);
-	default:
-		fprintf(stderr, "print ERROR: Unrecognized null_semantics::function type.\n");
-		return false;
-	}
-}
-
 template<typename Stream, typename Printer>
 constexpr bool print(const null_semantics& logical_form, Stream& out, Printer& printer) {
-	return true;
-}
-
-template<typename Stream, typename... Printer>
-inline bool print(const null_semantics::invert_iterator& inverter, Stream& out, Printer&&... printer) {
 	return true;
 }
 
@@ -1461,16 +1620,17 @@ constexpr bool apply(null_semantics::function function, const null_semantics& sr
 	return true;
 }
 
-constexpr bool invert(
-	null_semantics::invert_iterator& inverter,
-	null_semantics::function& function,
+inline bool invert(
+	null_semantics*& inverse,
+	unsigned int& inverse_count,
+	const null_semantics::function& function,
 	const null_semantics& first_arg,
 	const null_semantics& second_arg)
 {
-	return true;
-}
-
-constexpr bool next(const null_semantics::invert_iterator& inverter, null_semantics& dst) {
+	inverse = (null_semantics*) malloc(sizeof(null_semantics));
+	if (inverse == nullptr) return false;
+	inverse[0] = null_semantics();
+	inverse_count = 1;
 	return true;
 }
 
@@ -1500,20 +1660,19 @@ constexpr bool exclude_features(
 	return true;
 }
 
-constexpr bool is_separable(const null_semantics::function* functions, unsigned int rule_position) {
-	return false;
-}
-
 inline void is_separable(
-		const null_semantics::function* functions,
+		const transformation<null_semantics>* const functions,
 		unsigned int rule_length, bool* separable)
 {
 	for (unsigned int i = 0; i < rule_length; i++)
 		separable[i] = false;
 }
 
+struct dummy_morphology_parser { };
+
 template<typename EmitRootFunction, typename PartOfSpeechType>
-inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
+inline bool morphology_parse(
+		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const null_semantics& logical_form, EmitRootFunction emit_root)
 {
 	return emit_root(words, logical_form);
@@ -1521,6 +1680,7 @@ inline bool morphology_parse(const sequence& words, PartOfSpeechType pos,
 
 template<typename PartOfSpeechType>
 constexpr bool morphology_is_valid(
+		const dummy_morphology_parser& morph,
 		const sequence& terminal, PartOfSpeechType pos,
 		const null_semantics& logical_form)
 {

@@ -34,10 +34,7 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 /* TODO: the following is for debugging; delete it */
 string_map_scribe* debug_terminal_printer;
 string_map_scribe* debug_nonterminal_printer;
-unsigned int debug = 0;
 bool debug_flag = false;
-bool debug2 = false;
-bool debug_flag2 = false;
 
 thread_local double minimum_priority = 0.0;
 
@@ -334,13 +331,10 @@ struct syntax_state<Mode, Semantics, typename std::enable_if<
 	/* for sampling, we only record the rule */
 	rule<Semantics> r;
 
-	syntax_state(const syntax_node<Semantics>* const* terminal_tokens, unsigned int length) : r(length) {
-		r.functions[0] = Semantics::terminal_function();
-		for (unsigned int i = 0; i < length; i++)
-			r.nonterminals[i] = terminal_tokens[i]->right.nonterminals[0];
-	}
+	syntax_state(const syntax_node<Semantics>* const* terminal_tokens, unsigned int length) :
+		r(terminal_tokens, length) { }
 
-	syntax_state(const syntax_node<Semantics>* nonterminal_token) : r(0) {
+	syntax_state(const syntax_node<Semantics>* nonterminal_token) : r(nonterminal_token->right) {
 		/* we don't need information about subtree tokens
 		   when sampling or computing log probability bounds */
 	}
@@ -778,14 +772,19 @@ inline bool print(const nonterminal_iterator_state<Mode, Semantics>& state, Stre
 template<parse_mode Mode, typename Semantics>
 struct invert_iterator_state {
 	rule_state<Mode, Semantics>* rule;
-	typename Semantics::invert_iterator inverter; /* TODO: the inverter is unnecessary in syntactic parsing */
+	Semantics* inverse; /* TODO: the inverter is unnecessary in syntactic parsing */
+	unsigned int inverse_count;
+	unsigned int index;
 	syntax_state<Mode, Semantics> syntax; /* TODO: during sampling, this field is unnecessary */
 	double log_probability;
 
 	static inline void free(invert_iterator_state<Mode, Semantics>& state)
 	{
-		if (Mode != MODE_COMPUTE_BOUNDS)
-			core::free(state.inverter);
+		if (Mode != MODE_COMPUTE_BOUNDS) {
+			for (unsigned int i = 0; i < state.inverse_count; i++)
+				core::free(state.inverse[i]);
+			core::free(state.inverse);
+		}
 		core::free(state.syntax);
 		core::free(*state.rule);
 		if (state.rule->reference_count == 0)
@@ -799,7 +798,7 @@ inline bool print(const invert_iterator_state<Mode, Semantics>& state, Stream& o
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer)
 {
 	return print("\nlog_probability: ", out) && print(state.log_probability, out, PRINT_PROBABILITY_PRECISION)
-		&& (Mode == MODE_COMPUTE_BOUNDS || (print("\ninverted logical form: ", out) && print(state.inverter, out, terminal_printer)))
+		&& (Mode == MODE_COMPUTE_BOUNDS || (print("\ninverted logical form: ", out) && print(state.inverse[state.index], out, terminal_printer)))
 		&& print("\nsyntax: ", out) && print(state.syntax, out, nonterminal_printer, terminal_printer)
 		&& print("\nrule state: ", out) && print(*state.rule, out, 1, nonterminal_printer, terminal_printer);
 }
@@ -903,7 +902,7 @@ enum search_phase {
 };
 
 template<parse_mode Mode, typename Semantics>
-struct search_state {
+struct parser_search_state {
 	double priority;
 	search_phase phase;
 	union {
@@ -918,7 +917,7 @@ struct search_state {
 		return priority;
 	}
 
-	static inline void free(search_state<Mode, Semantics>& state) {
+	static inline void free(parser_search_state<Mode, Semantics>& state) {
 		switch (state.phase) {
 		case PHASE_RULE:
 			core::free(*state.rule);
@@ -939,8 +938,8 @@ struct search_state {
 
 template<parse_mode Mode, typename Semantics>
 inline bool operator < (
-	const search_state<Mode, Semantics>& first,
-	const search_state<Mode, Semantics>& second)
+	const parser_search_state<Mode, Semantics>& first,
+	const parser_search_state<Mode, Semantics>& second)
 {
 	if (first.get_priority() < second.get_priority()) return true;
 	else if (first.get_priority() > second.get_priority()) return false;
@@ -949,7 +948,7 @@ inline bool operator < (
 
 template<parse_mode Mode, typename Semantics, typename Stream,
 	typename NonterminalPrinter, typename TerminalPrinter>
-inline bool print(const search_state<Mode, Semantics>& state, Stream& out,
+inline bool print(const parser_search_state<Mode, Semantics>& state, Stream& out,
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer)
 {
 	switch (state.phase) {
@@ -970,13 +969,13 @@ inline bool print(const search_state<Mode, Semantics>& state, Stream& out,
 
 template<parse_mode Mode, typename Semantics>
 struct agenda<Mode, Semantics> {
-	std::multiset<search_state<Mode, Semantics>> queue;
+	std::multiset<parser_search_state<Mode, Semantics>> queue;
 	double last_priority;
 
 	agenda() : last_priority(std::numeric_limits<double>::infinity()) { }
 
 	~agenda() {
-		for (search_state<Mode, Semantics> state : queue)
+		for (parser_search_state<Mode, Semantics> state : queue)
 			free(state);
 	}
 
@@ -989,15 +988,15 @@ struct agenda<Mode, Semantics> {
 	}
 
 	inline void push(
-			search_state<Mode, Semantics>& new_state,
+			parser_search_state<Mode, Semantics>& new_state,
 			cell_value<Mode, Semantics>& cell)
 	{
 		queue.insert(new_state);
 	}
 
-	inline search_state<Mode, Semantics> pop(unsigned int iteration) {
+	inline parser_search_state<Mode, Semantics> pop(unsigned int iteration) {
 		auto last = queue.cend(); last--;
-		search_state<Mode, Semantics> state = *last;
+		parser_search_state<Mode, Semantics> state = *last;
 		queue.erase(last);
 
 //#if !defined(NDEBUG)
@@ -1015,7 +1014,7 @@ struct agenda<Mode, Semantics> {
 	inline void prune_beam() {
 		while (queue.size() > BEAM_WIDTH) {
 			auto first = queue.cbegin();
-			search_state<Mode, Semantics> state = *first;
+			parser_search_state<Mode, Semantics> state = *first;
 			free(state);
 			queue.erase(first);
 		}
@@ -1756,12 +1755,14 @@ struct chart
 /* forward declarations */
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const Semantics& logical_form_set,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
@@ -1931,10 +1932,10 @@ void right_probability(const rule<Semantics>& r,
 	double old_prior, double& right, double& right_prior)
 {
 	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
-	is_separable(r.functions, r.length, separable);
+	is_separable(r.transformations, r.length, separable);
 
 	Semantics next_logical_form;
-	if (separable[0] && !apply(r.functions[0], logical_form_set, next_logical_form)) {
+	if (separable[0] && !apply(r.transformations[0], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		return;
 	}
@@ -1963,7 +1964,7 @@ void right_probability(const rule<Semantics>& r,
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	for (unsigned int i = 1; i + 1 < r.length; i++) {
 		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[i] && !apply(r.functions[i], logical_form_set, next_logical_form)) {
+		if (separable[i] && !apply(r.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
 		update_message(r, parse_chart, next_logical_form, i, start, end, message, additive_priors,
@@ -1972,7 +1973,7 @@ void right_probability(const rule<Semantics>& r,
 	}
 
 	free(next_logical_form); initialize_any(next_logical_form);
-	if (separable[r.length - 1] && !apply(r.functions[r.length - 1], logical_form_set, next_logical_form)) {
+	if (separable[r.length - 1] && !apply(r.transformations[r.length - 1], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity(); return;
 	}
 	update_message_k(parse_chart, next_logical_form, r.nonterminals[r.length - 1], start, end, message,
@@ -1995,7 +1996,7 @@ void right_probability(const rule<Semantics>& r,
 	right = 0.0;
 	for (unsigned int i = 0; i < r.length; i++) {
 		Semantics next_logical_form;
-		if (!apply(r.functions[i], logical_form_set, next_logical_form)) {
+		if (!apply(r.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
 		}
@@ -2039,11 +2040,11 @@ void right_probability(
 	unsigned int rule_position = rule.rule_position + 1;
 	const ::rule<Semantics>& r = rule.syntax.get_rule();
 	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
-	is_separable(r.functions, r.length, separable);
+	is_separable(r.transformations, r.length, separable);
 
 	Semantics next_logical_form; initialize_any(next_logical_form);
 	if (!IgnoreNext && separable[rule.rule_position]
-	 && !apply(r.functions[rule.rule_position], rule.logical_form_set, next_logical_form))
+	 && !apply(r.transformations[rule.rule_position], rule.logical_form_set, next_logical_form))
 	{
 		right = -std::numeric_limits<double>::infinity();
 		return;
@@ -2074,7 +2075,7 @@ void right_probability(
 	if (rule_position + 1 == r.length) {
 		/* this is the last nonterminal in this rule */
 		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[rule_position] && !apply(r.functions[rule_position], rule.logical_form_set, next_logical_form)) {
+		if (separable[rule_position] && !apply(r.transformations[rule_position], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
 		inner_probability(parse_chart, r.nonterminals[rule_position],
@@ -2098,7 +2099,7 @@ void right_probability(
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	for (unsigned int i = rule_position + 1; i + 1 < r.length; i++) {
 		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[i] && !apply(r.functions[i], rule.logical_form_set, next_logical_form)) {
+		if (separable[i] && !apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			free(message); free(next_message);
 			free(additive_priors); free(next_additive_priors);
@@ -2111,7 +2112,7 @@ void right_probability(
 	}
 
 	free(next_logical_form); initialize_any(next_logical_form);
-	if (separable[r.length - 1] && !apply(r.functions[r.length - 1], rule.logical_form_set, next_logical_form)) {
+	if (separable[r.length - 1] && !apply(r.transformations[r.length - 1], rule.logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		free(message); free(next_message);
 		free(additive_priors); free(next_additive_priors);
@@ -2139,7 +2140,7 @@ void right_probability(
 	const ::rule<Semantics>& r = rule.syntax.get_rule();
 	for (unsigned int i = start; i < r.length; i++) {
 		Semantics next_logical_form;
-		if (!apply(r.functions[i], rule.logical_form_set, next_logical_form)) {
+		if (!apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
 		}
@@ -2299,7 +2300,7 @@ inline double compute_priority(
 {
 	Semantics logical_form;
 	const rule<Semantics>& r = state.syntax.get_rule();
-	if (!apply(r.functions[state.rule_position], state.logical_form_set, logical_form))
+	if (!apply(r.transformations[state.rule_position], state.logical_form_set, logical_form))
 		return 0.0;
 
 	span positions;
@@ -2345,7 +2346,7 @@ inline double compute_priority(const invert_iterator_state<Mode, Semantics>& sta
 {
 	double outer, outer_prior, old_prior = 0.0;
 	if (Mode == MODE_PARSE)
-		old_prior = min(log_probability<false>(state.inverter.get_next()), state.rule->cell->prior_probability);
+		old_prior = min(log_probability<false>(state.inverse[state.index]), state.rule->cell->prior_probability);
 	outer_probability<true>(*state.rule, parse_chart, N, old_prior, outer, outer_prior);
 	return exp(state.log_probability + outer - old_prior);
 }
@@ -2433,7 +2434,7 @@ inline bool push_rule_states(
 			continue;
 		}
 
-		search_state<Mode, Semantics> state;
+		parser_search_state<Mode, Semantics> state;
 		state.rule = new_rule;
 		state.phase = PHASE_RULE;
 		state.priority = priority;
@@ -2464,17 +2465,18 @@ bool push_invert_state(
 		return false;
 	} else if (
 		Mode != MODE_COMPUTE_BOUNDS
-	 && !invert(inverse->inverter,
-		 rule.syntax.get_rule().functions[rule.rule_position],
+	 && !invert(inverse->inverse, inverse->inverse_count,
+		 rule.syntax.get_rule().transformations[rule.rule_position],
 		 rule.logical_form_set, logical_form_set))
 	{
 		/* the inverse is empty, so return quietly */
 		free(inverse); return true;
 	}
+	inverse->index = 0;
 
 if (Mode == MODE_PARSE && debug_flag) {
 default_scribe scribe;
-check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_next(), scribe);
+check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverse[inverse->index], scribe);
 }
 
 	inverse->rule = &rule;
@@ -2482,16 +2484,22 @@ check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_n
 	/* TODO: make this work for generic inverter structures */
 	if (Mode == MODE_PARSE) {
 		double prev_prior = min(log_probability<false>(rule.logical_form_set), rule.cell->prior_probability);
-		inverse->log_probability += min(log_probability<false>(inverse->inverter.get_next()), rule.cell->prior_probability) - prev_prior;
+		inverse->log_probability += min(log_probability<false>(inverse->inverse[inverse->index]), rule.cell->prior_probability) - prev_prior;
 		if (std::isinf(inverse->log_probability)) {
-			if (Mode != MODE_COMPUTE_BOUNDS)
-				free(inverse->inverter);
+			if (Mode != MODE_COMPUTE_BOUNDS) {
+				for (unsigned int i = 0; i < inverse->inverse_count; i++)
+					free(inverse->inverse[i]);
+				free(inverse->inverse);
+			}
 			free(inverse); return true;
 		}
 	}
 	if (!init(inverse->syntax, syntax)) {
-		if (Mode != MODE_COMPUTE_BOUNDS)
-			free(inverse->inverter);
+		if (Mode != MODE_COMPUTE_BOUNDS) {
+			for (unsigned int i = 0; i < inverse->inverse_count; i++)
+				free(inverse->inverse[i]);
+			free(inverse->inverse);
+		}
 		free(inverse); return false;
 	}
 	rule.reference_count++;
@@ -2501,7 +2509,7 @@ check_invariants(G, parse_chart, rule, logical_form_set, inverse->inverter.get_n
 check_log_likelihood(G, *inverse, logical_form_set, parse_chart.token_map);
 }*/
 
-	search_state<Mode, Semantics> state;
+	parser_search_state<Mode, Semantics> state;
 	state.invert_iterator = inverse;
 	state.phase = PHASE_INVERT_ITERATOR;
 	state.priority = compute_priority(*inverse, parse_chart,
@@ -2616,7 +2624,7 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood
 		completer->cell = &completed_cell;
 		completed_cell.completer = completer;
 
-		search_state<Mode, Semantics> state;
+		parser_search_state<Mode, Semantics> state;
 		state.rule_completer = completer;
 		state.phase = PHASE_RULE_COMPLETER;
 		state.priority = compute_priority(*completer,
@@ -2626,12 +2634,13 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood
 	return true;
 }
 
-template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution, typename Morphology>
 inline bool push_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
 	const syntax_state<Mode, Semantics>& syntax,
@@ -2707,7 +2716,7 @@ inline bool push_nonterminal_iterator(
 				}
 				iterator->iterator = 0;
 
-				search_state<Mode, Semantics> state;
+				parser_search_state<Mode, Semantics> state;
 				state.nonterminal_iterator = iterator;
 				state.phase = PHASE_NONTERMINAL_ITERATOR;
 				state.priority = compute_priority(*iterator, parse_chart, N);
@@ -2720,7 +2729,7 @@ inline bool push_nonterminal_iterator(
 		{
 			rule<Semantics>& terminal_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
 			syntax_state<Mode, Semantics>& new_syntax = *((syntax_state<Mode, Semantics>*) alloca(sizeof(syntax_state<Mode, Semantics>)));
-			terminal_rule.functions = r.functions;
+			terminal_rule.transformations = r.transformations;
 			terminal_rule.nonterminals = terminal.tokens;
 			terminal_rule.length = terminal.length;
 			if (!init(new_syntax, terminal_rule)
@@ -2733,18 +2742,20 @@ inline bool push_nonterminal_iterator(
 		};
 
 	if (r.is_terminal()) {
-		return morphology_parse({r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
+		return morphology_parse(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
 	} else {
 		return push_iterator(r, syntax, logical_form_set);
 	}
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 inline bool push_terminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
+	Morphology& morphology_parser,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
 	const Semantics& logical_form_set)
@@ -2759,7 +2770,7 @@ inline bool push_terminal_iterator(
 
 	unsigned int dst = 0;
 	for (unsigned int i = 0; i < terminal_count; i++) {
-		if (morphology_is_valid(terminals[i].object, N.rule_distribution.get_part_of_speech(), logical_form_set)) {
+		if (morphology_is_valid(morphology_parser, terminals[i].object, N.rule_distribution.get_part_of_speech(), logical_form_set)) {
 			move(terminals[i], terminals[dst]);
 			dst++;
 		} else {
@@ -2787,7 +2798,7 @@ inline bool push_terminal_iterator(
 		return false;
 	}
 
-	search_state<Mode, Semantics> state;
+	parser_search_state<Mode, Semantics> state;
 	state.terminal_iterator = iterator;
 	state.phase = PHASE_TERMINAL_ITERATOR;
 	state.priority = compute_priority(*iterator, parse_chart, N);
@@ -2796,12 +2807,14 @@ inline bool push_terminal_iterator(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const rule_state<Mode, Semantics>& completed_rule,
 	const syntax_state<Mode, Semantics>& syntax,
 	const Semantics& logical_form,
@@ -2839,7 +2852,7 @@ bool complete_invert_state(
 			new_rule->log_probability = inner_probability;
 			new_rule->logical_form_set = logical_form;
 
-			search_state<Mode, Semantics> state;
+			parser_search_state<Mode, Semantics> state;
 			state.rule = new_rule;
 			state.phase = PHASE_RULE;
 			state.priority = compute_priority(*new_rule, parse_chart,
@@ -2866,45 +2879,52 @@ bool complete_invert_state(
 				*completed_rule.cell, new_syntax, logical_form,
 				inner_probability - old_prior, completed_rule.positions);
 	} else {
-		return push_nonterminal_iterator<AllowAmbiguous>(
-				queue, G, parse_chart, sentence, completed_rule.nonterminal,
-				*completed_rule.cell, new_syntax, logical_form,
-				completed_rule.positions, inner_probability - old_prior);
+		return push_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart,
+				sentence, morphology_parser, completed_rule.nonterminal,
+				*completed_rule.cell, new_syntax, logical_form, completed_rule.positions,
+				inner_probability - old_prior);
 	}
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 inline bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const invert_iterator_state<Mode, Semantics>& state)
 {
 	Semantics logical_form;
-	if (Mode != MODE_COMPUTE_BOUNDS && !next(state.inverter, logical_form))
-		return false;
+	if (Mode != MODE_COMPUTE_BOUNDS)
+		logical_form = state.inverse[state.index];
 	return complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence,
-			*state.rule, state.syntax, logical_form, state.log_probability);
+			morphology_parser, *state.rule, state.syntax, logical_form, state.log_probability);
 }
 
-template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, parse_mode Mode,
+	typename Semantics, typename Distribution,
+	typename Morphology>
 bool process_invert_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	invert_iterator_state<Mode, Semantics>& iterator,
 	bool& cleanup)
 {
-	if (!complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence, iterator))
+	if (!complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, iterator))
 		return false;
 
 	/* increment the iterator; add it back to the queue if it's not empty */
-	iterator.inverter++;
-	if (!is_empty(iterator.inverter)) {
-		search_state<Mode, Semantics> state;
+	if (Mode == MODE_COMPUTE_BOUNDS)
+		return true;
+	iterator.index++;
+	if (iterator.index < iterator.inverse_count) {
+		parser_search_state<Mode, Semantics> state;
 		state.invert_iterator = &iterator;
 		state.phase = PHASE_INVERT_ITERATOR;
 		state.priority = compute_priority(iterator, parse_chart,
@@ -2923,9 +2943,9 @@ bool check_invariants(
 {
 	/* check the prior probability invariants */
 	bool valid = true;
-	const typename Semantics::function& transformation = rule.syntax.get_rule().functions[rule.rule_position];
+	const transformation<Semantics>& transformation = rule.syntax.get_rule().transformations[rule.rule_position];
 	bool* separable = (bool*) alloca(sizeof(bool) * rule.syntax.get_rule().length);
-	is_separable(rule.syntax.get_rule().functions, rule.syntax.get_rule().length, separable);
+	is_separable(rule.syntax.get_rule().transformations, rule.syntax.get_rule().length, separable);
 	if (separable[rule.rule_position]) {
 		Semantics transformed;
 		if (!apply(transformation, rule.logical_form_set, transformed)) {
@@ -2957,11 +2977,9 @@ bool check_invariants(
 		print("  old logical form:   ", stderr); print(rule.logical_form_set, stderr, scribe); print('\n', stderr);
 		print("  child logical form: ", stderr); print(child_logical_form, stderr, scribe); print('\n', stderr);
 		print("  new logical form:   ", stderr); print(new_logical_form, stderr, scribe); print('\n', stderr);
-debug2 = true;
 		fprintf(stderr, "  prior of old logical form:   %.*lf\n", PRINT_PROBABILITY_PRECISION, log_probability<false>(rule.logical_form_set));
 		fprintf(stderr, "  prior of child logical form: %.*lf\n", PRINT_PROBABILITY_PRECISION, log_probability<false>(child_logical_form));
 		fprintf(stderr, "  prior of new logical form:   %.*lf\n", PRINT_PROBABILITY_PRECISION, log_probability<false>(new_logical_form));
-debug2 = false;
 	}
 
 	/* check the conditional probability invariant */
@@ -2997,9 +3015,6 @@ inline void check_log_likelihood(
 		fprintf(stderr, "compute_nonterminal WARNING: The computed log likelihood is incorrect.\n");
 		print(logical_form_set, stderr, *debug_terminal_printer); print("\n", stderr);
 		print(syntax.get_tree(), stderr, *debug_nonterminal_printer, *debug_terminal_printer, nonterminal_id); print("\n", stderr);
-debug2 = true;
-expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, token_map, nonterminal_id);
-debug2 = false;
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
 	}
@@ -3014,10 +3029,10 @@ inline void check_log_likelihood(
 {
 	const rule_state<Mode, Semantics>& state = *inverse.rule;
 	double expected_log_likelihood = 0.0;
-	double computed_log_likelihood = inverse.log_probability - min(log_probability<false>(inverse.inverter.get_next()), state.cell->prior_probability);
+	double computed_log_likelihood = inverse.log_probability - min(log_probability<false>(inverse.inverse[inverse.index]), state.cell->prior_probability);
 	for (unsigned int i = 0; i < state.rule_position; i++) {
 		Semantics transformed;
-		if (!apply(state.syntax.get_rule().functions[i], *inverse.inverter.inverse, transformed)) {
+		if (!apply(state.syntax.get_rule().transformations[i], *inverse.inverse[inverse.index], transformed)) {
 			//fprintf(stderr, "check_log_likelihood WARNING: Unable to apply semantic transformation function at rule position %u.\n", i);
 			//print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
 			return;
@@ -3029,14 +3044,6 @@ inline void check_log_likelihood(
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
 		fprintf(stderr, "compute_nonterminal WARNING: The computed log likelihood is incorrect.\n");
 		print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
-debug2 = true;
-for (unsigned int i = 0; i < state.rule_position; i++) {
-Semantics transformed;
-apply(state.syntax.get_rule().functions[i], *inverse.inverter.inverse, transformed);
-::log_probability(G, *(state.syntax.get_tree().children[i]), transformed, token_map, state.syntax.get_rule().nonterminals[i]);
-}
-log_probability(G, inverse.syntax.get_tree(), child_logical_form_set, token_map, state.syntax.get_rule().nonterminals[state.rule_position]);
-debug2 = false;
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
 	}
@@ -3069,7 +3076,7 @@ bool process_rule_completer(
 	/* increment the iterator and push it back on the queue if it's not empty */
 	completer.iterator++;
 	if (completer.iterator < completer.waiting_states->length) {
-		search_state<Mode, Semantics> state;
+		parser_search_state<Mode, Semantics> state;
 		state.rule_completer = &completer;
 		state.phase = PHASE_RULE_COMPLETER;
 		unsigned int nonterminal = completer.waiting_states->first()->nonterminal;
@@ -3088,12 +3095,14 @@ inline void free_rules(array<rule<Semantics>>& rules) {
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const Semantics& logical_form_set,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
@@ -3117,7 +3126,7 @@ bool expand_nonterminal(
 			unsigned int* positions = (unsigned int*) alloca(sizeof(unsigned int) * (r.length + 1));
 			positions[0] = position.start;
 			positions[r.length] = position.end;
-			push_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence,
+			push_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser,
 					nonterminal, cell, syntax_state<Mode, Semantics>(r), logical_form_set, positions, 0.0);
 		} else {
 			if (!push_rule_states(queue, G, parse_chart, nonterminal,
@@ -3133,16 +3142,18 @@ bool expand_nonterminal(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution>
+	typename Semantics, typename Distribution,
+	typename Morphology>
 inline bool expand_nonterminal(
-		agenda<Mode, Semantics>& queue,
-		grammar<Semantics, Distribution>& G,
-		chart<Mode, Semantics>& parse_chart,
-		const tokenized_sentence<Semantics>& sentence,
-		cell_value<Mode, Semantics>& cell,
-		rule_state<Mode, Semantics>& state,
-		const Semantics& logical_form_set,
-		span position, double initial_prior)
+	agenda<Mode, Semantics>& queue,
+	grammar<Semantics, Distribution>& G,
+	chart<Mode, Semantics>& parse_chart,
+	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
+	cell_value<Mode, Semantics>& cell,
+	rule_state<Mode, Semantics>& state,
+	const Semantics& logical_form_set,
+	span position, double initial_prior)
 {
 	double outer, prior = 0.0;
 	cell_value<Mode, Semantics>* cell_to_expand = &cell;
@@ -3208,36 +3219,40 @@ inline bool expand_nonterminal(
 
 	/* go ahead and expand this nonterminal at this position */
 	/* TODO: even in parsing mode, we're assuming here that
-		whether or not a nonterminal is a preterminal is fixed */
+	   whether or not a nonterminal is a preterminal is fixed */
 	unsigned int next_nonterminal = r.nonterminals[state.rule_position];
 	const auto& next = get_nonterminal<Mode>(G, next_nonterminal);
 	if (next.rule_distribution.has_terminal_rules()) {
 		if (Mode == MODE_GENERATE) {
-			if (!push_terminal_iterator<AllowAmbiguous>(queue, G,
-					parse_chart, next_nonterminal, *cell_to_expand, logical_form_set))
+			if (!push_terminal_iterator<AllowAmbiguous>(queue, G, parse_chart,
+					morphology_parser, next_nonterminal, *cell_to_expand, logical_form_set))
 				return false;
 		} else {
 			unsigned int positions[] = { position.start, position.end };
 			if (!push_nonterminal_iterator<AllowAmbiguous>(
-					queue, G, parse_chart, sentence, next_nonterminal, *cell_to_expand,
+					queue, G, parse_chart, sentence, morphology_parser, next_nonterminal, *cell_to_expand,
 					syntax_state<Mode, Semantics>(sentence.tokens + position.start, position.end - position.start),
 					logical_form_set, positions, 0.0))
 				return false;
 		}
 	} if (next.rule_distribution.has_nonterminal_rules()) {
-		if (!expand_nonterminal<AllowAmbiguous>(queue, G, parse_chart, sentence,
-				logical_form_set, next_nonterminal, *cell_to_expand, position))
+		if (!expand_nonterminal<AllowAmbiguous>(queue, G, parse_chart,
+				sentence, morphology_parser, logical_form_set,
+				next_nonterminal, *cell_to_expand, position))
 			return false;
 	}
 	return true;
 }
 
-template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, parse_mode Mode,
+	typename Semantics, typename Distribution,
+	typename Morphology>
 bool process_rule_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	rule_state<Mode, Semantics>& state)
 {
 	/* get the start and end position for this nonterminal */
@@ -3252,47 +3267,22 @@ bool process_rule_state(
 	/* apply the semantic transformation paired with the next nonterminal */
 	Semantics expanded_logical_forms;
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
-	 && !apply(state.syntax.get_rule().functions[state.rule_position],
+	 && !apply(state.syntax.get_rule().transformations[state.rule_position],
 		 state.logical_form_set, expanded_logical_forms))
 	{
 		return false;
 	}
 
-/*const rule<Semantics>& r = state.syntax.get_rule();
-if (Mode == MODE_SAMPLE && r.length == 2 && state.nonterminal == G.nonterminal_names.get("DP'") && state.logical_form_set.index == NUMBER_SINGULAR
- && r.nonterminals[0] == G.nonterminal_names.get("THE") && r.nonterminals[1] == G.nonterminal_names.get("NP")
- && r.functions[0] == datalog_expression_root::FUNCTION_NULL && r.functions[1] == datalog_expression_root::FUNCTION_CONCORD_ALL
- && state.positions[0] == 2 && state.positions[1] == 3 && state.positions[2] == 6) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && r.length == 2 && state.nonterminal == G.nonterminal_names.get("NP")
- && r.nonterminals[0] == G.nonterminal_names.get("NP") && r.nonterminals[1] == G.nonterminal_names.get("N_ADJUNCT")
- && r.functions[0] == datalog_expression_root::FUNCTION_SELECT_LEFT && r.functions[1] == datalog_expression_root::FUNCTION_DELETE_LEFT_HEAD
- && state.positions[0] == 3 && state.positions[1] == 4 && state.positions[2] == 6) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && r.length == 1 && state.nonterminal == G.nonterminal_names.get("NP")
- && r.nonterminals[0] == G.nonterminal_names.get("NP_ADJ") && r.functions[0] == datalog_expression_root::FUNCTION_IDENTITY
- && state.positions[0] == 3 && state.positions[1] == 4) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && r.length == 1 && state.nonterminal == G.nonterminal_names.get("NP_ADJ")
- && r.nonterminals[0] == G.nonterminal_names.get("NP_N") && r.functions[0] == datalog_expression_root::FUNCTION_IDENTITY
- && state.positions[0] == 3 && state.positions[1] == 4) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && r.length == 1 && state.nonterminal == G.nonterminal_names.get("NP_N")
- && r.nonterminals[0] == G.nonterminal_names.get("N_PREDICATE") && r.functions[0] == datalog_expression_root::FUNCTION_IDENTITY
- && state.positions[0] == 3 && state.positions[1] == 4) {
-print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-}*/
-
 	unsigned int next_nonterminal = state.syntax.get_rule().nonterminals[state.rule_position];
 	cell_list<Mode, Semantics>& cells = parse_chart.get_cells(next_nonterminal, position);
 	if (Mode != MODE_GENERATE && position.length() == 1 && !sentence.tokens[position.start]->is_terminal()) {
 		/* the next token is a subtree */
-		double log_probability = sentence.subtree_probability(G,
-				next_nonterminal, expanded_logical_forms, position.start);
+		double log_probability = sentence.subtree_probability(
+				G, next_nonterminal, expanded_logical_forms, position.start);
 		if (is_negative_inf(log_probability))
 			return true;
 		return complete_invert_state<AllowAmbiguous>(
-				queue, G, parse_chart, sentence, state,
+				queue, G, parse_chart, sentence, morphology_parser, state,
 				syntax_state<Mode, Semantics>(sentence.tokens[position.start]),
 				state.logical_form_set, state.log_probability + log_probability);
 	}
@@ -3302,7 +3292,8 @@ print(state.logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, 
 			const Semantics& logical_form_set, double prior)
 		{
 			return expand_nonterminal<AllowAmbiguous>(
-					queue, G, parse_chart, sentence, cell, state, logical_form_set, position, prior);
+					queue, G, parse_chart, sentence, morphology_parser,
+					cell, state, logical_form_set, position, prior);
 		};
 	return cells.expand_cells(expanded_logical_forms, expand_cell);
 }
@@ -3322,7 +3313,7 @@ bool process_terminal_iterator(
 	iterator.iterator++;
 	if (iterator.iterator < iterator.terminal_count) {
 		/* add the iterator back into the search queue if there are remaining items */
-		search_state<MODE_GENERATE, Semantics> state;
+		parser_search_state<MODE_GENERATE, Semantics> state;
 		state.terminal_iterator = &iterator;
 		state.phase = PHASE_TERMINAL_ITERATOR;
 		state.priority = compute_priority(iterator, parse_chart,
@@ -3366,7 +3357,7 @@ bool process_nonterminal_iterator(
 	iterator.iterator++;
 	if (iterator.iterator < iterator.posterior_length) {
 		/* add the iterator back into the search queue if there are remaining items */
-		search_state<Mode, Semantics> state;
+		parser_search_state<Mode, Semantics> state;
 		state.nonterminal_iterator = &iterator;
 		state.phase = PHASE_NONTERMINAL_ITERATOR;
 		state.priority = compute_priority(iterator, parse_chart,
@@ -3440,7 +3431,7 @@ bool sample(
 		/* recursively sample the descendant nodes */
 		for (unsigned int i = 0; i < nonterminal.syntax.r.length; i++) {
 			Semantics transformed;
-			if (!apply(nonterminal.syntax.r.functions[i], logical_form, transformed))
+			if (!apply(nonterminal.syntax.r.transformations[i], logical_form, transformed))
 				return false;
 
 			unsigned int start = nonterminal.positions[i];
@@ -3496,14 +3487,15 @@ inline bool is_sorted(const cell_value<MODE_PARSE, Semantics>& cell, double& bes
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 inline bool update_outer_probabilities(
-		agenda<MODE_PARSE, Semantics>& queue,
-		grammar<Semantics, Distribution>& G,
-		chart<MODE_PARSE, Semantics>& parse_chart,
-		const tokenized_sentence<Semantics>& sentence,
-		const Semantics& logical_form,
-		double log_search_priority)
+	agenda<MODE_PARSE, Semantics>& queue,
+	grammar<Semantics, Distribution>& G,
+	chart<MODE_PARSE, Semantics>& parse_chart,
+	const tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
+	const Semantics& logical_form,
+	double log_search_priority)
 {
 
 /*for (unsigned int i = 0; i < sentence.length + 1; i++) {
@@ -3539,7 +3531,7 @@ return;*/
 	initialize_any(any);
 
 	/* clear the search queue */
-	for (search_state<MODE_PARSE, Semantics> state : queue)
+	for (parser_search_state<MODE_PARSE, Semantics> state : queue)
 		free(state);
 	queue.clear();
 
@@ -3605,13 +3597,13 @@ return;*/
 			cell.expanded = true;
 			cell.prior_probability = prior;
 			cell.var.set_outer_probability(prior);
-			return expand_nonterminal(queue, G, parse_chart, sentence, logical_form_set, 1, cell, {0, sentence.length});
+			return expand_nonterminal(queue, G, parse_chart, sentence, morphology_parser, logical_form_set, 1, cell, {0, sentence.length});
 		};
 	/* TODO: should parse_chart.cell_count be re-initialized to 0 here? */
 	return root_cells.expand_cells(logical_form, expand_cell);
 
-	/*std::multiset<search_state<MODE_PARSE, Semantics>> new_queue;
-	for (search_state<MODE_PARSE, Semantics> state : queue) {
+	/*std::multiset<parser_search_state<MODE_PARSE, Semantics>> new_queue;
+	for (parser_search_state<MODE_PARSE, Semantics> state : queue) {
 		switch (state.phase) {
 		case PHASE_RULE:
 			state.priority = compute_priority(*state.rule, parse_chart,
@@ -3635,13 +3627,15 @@ return;*/
 	std::swap(new_queue, queue);*/
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution,
+template<parse_mode Mode, typename Semantics,
+	typename Distribution, typename Morphology,
 	typename std::enable_if<Mode != MODE_PARSE>::type* = nullptr>
 inline void update_outer_probabilities(
 		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
 		chart<Mode, Semantics>& parse_chart,
 		const tokenized_sentence<Semantics>& sentence,
+		const Morphology& morphology_parser,
 		const Semantics& logical_form,
 		double log_search_priority)
 { }
@@ -3653,12 +3647,14 @@ enum parse_result {
 };
 
 template<bool AllowAmbiguous, bool Quiet, unsigned int K = 1,
-		parse_mode Mode, typename Semantics, typename Distribution>
+		parse_mode Mode, typename Semantics,
+		typename Distribution, typename Morphology>
 parse_result parse(
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics>& parse_chart,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	unsigned int time_limit = UINT_MAX)
 {
 	agenda<Mode, Semantics> queue;
@@ -3675,8 +3671,8 @@ parse_result parse(
 			if (cell.expanded) return true;
 
 			cell.expanded = true;
-			return expand_nonterminal<AllowAmbiguous>(queue, G, parse_chart,
-					sentence, logical_form_set, 1, cell, {0, sentence.length});
+			return expand_nonterminal<AllowAmbiguous>(queue, G, parse_chart, sentence,
+					morphology_parser, logical_form_set, 1, cell, {0, sentence.length});
 		};
 	if (!root_cells.expand_cells(logical_form, expand_cell))
 		return PARSE_FAILURE;
@@ -3694,13 +3690,13 @@ parse_result parse(
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
-		search_state<Mode, Semantics> state = queue.pop(iteration);
+		parser_search_state<Mode, Semantics> state = queue.pop(iteration);
 		last_log_priority = log(queue.priority(root_cell));
 
 		bool cleanup = true;
 		switch (state.phase) {
 		case PHASE_RULE:
-			process_rule_state<AllowAmbiguous>(queue, G, parse_chart, sentence, *state.rule);
+			process_rule_state<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, *state.rule);
 			free(*state.rule);
 			if (state.rule->reference_count == 0)
 				free(state.rule);
@@ -3714,7 +3710,7 @@ fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 			if (cleanup) { free(*state.nonterminal_iterator); free(state.nonterminal_iterator); }
 			break;
 		case PHASE_INVERT_ITERATOR:
-			process_invert_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, *state.invert_iterator, cleanup);
+			process_invert_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, *state.invert_iterator, cleanup);
 			if (cleanup) { free(*state.invert_iterator); free(state.invert_iterator); }
 			break;
 		case PHASE_RULE_COMPLETER:
@@ -3745,7 +3741,7 @@ fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/*auto first = queue.cbegin();
 		while (Mode == MODE_PARSE && !queue.is_empty() && (first->priority < minimum_priority || first->priority == 0.0)) {
-			search_state<Mode, Semantics> state = *first;
+			parser_search_state<Mode, Semantics> state = *first;
 			free(state);
 			queue.erase(first);
 			first = queue.cbegin();
@@ -3755,15 +3751,16 @@ fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 	return result;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 inline bool sample(
 	syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	chart<MODE_SAMPLE, Semantics>& parse_chart,
 	const Semantics& logical_form,
-	tokenized_sentence<Semantics>& sentence)
+	tokenized_sentence<Semantics>& sentence,
+	Morphology& morphology_parser)
 {
-	if (parse<false, true>(G, parse_chart, logical_form, sentence) != PARSE_SUCCESS)
+	if (parse<false, true>(G, parse_chart, logical_form, sentence, morphology_parser) != PARSE_SUCCESS)
 		return false;
 
 	auto expand_cell = [&](
@@ -3800,7 +3797,7 @@ bool sample_chart(unsigned int nonterminal_id,
 			}
 
 			Semantics transformed;
-			if (!apply(syntax.right.functions[i], logical_form, transformed))
+			if (!apply(syntax.right.transformations[i], logical_form, transformed))
 				return false;
 
 			if (!sample_chart(syntax.right.nonterminals[i],
@@ -3824,28 +3821,30 @@ bool sample_chart(unsigned int nonterminal_id,
 	return cells.expand_cells(logical_form, init_slice_variable);
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 inline bool sample(syntax_node<Semantics>*& syntax,
-		grammar<Semantics, Distribution>& G,
-		const Semantics& logical_form,
-		tokenized_sentence<Semantics>& sentence,
-		const string** token_map,
-		unsigned int nonterminal = 1)
+	grammar<Semantics, Distribution>& G,
+	const Semantics& logical_form,
+	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
+	const string** token_map,
+	unsigned int nonterminal = 1)
 {
 	/* perform block sampling */
 	chart<MODE_SAMPLE, Semantics> parse_chart = chart<MODE_SAMPLE, Semantics>(sentence.length, G.nonterminals.length, token_map);
-	if (!sample(syntax, G, parse_chart, logical_form, sentence))
+	if (!sample(syntax, G, parse_chart, logical_form, sentence, morphology_parser))
 		return false;
 
 	G.clear();
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 bool resample(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const string** token_map,
 	unsigned int nonterminal = 1)
 {
@@ -3864,7 +3863,7 @@ bool resample(syntax_node<Semantics>*& syntax,
 	free(*syntax);
 
 	/* perform block sampling */
-	if (!sample(syntax, G, parse_chart, logical_form, sentence))
+	if (!sample(syntax, G, parse_chart, logical_form, sentence, morphology_parser))
 		return false;
 
 	/* compute the (fully factorized) probability of the new tree */
@@ -3886,11 +3885,12 @@ bool resample(syntax_node<Semantics>*& syntax,
 	return true;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 bool resample(syntax_node<Semantics>** syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics* logical_forms,
 	tokenized_sentence<Semantics>* sentences,
+	const Morphology& morphology_parser,
 	unsigned int* nonterminals,
 	unsigned int sentence_count)
 {
@@ -3909,7 +3909,7 @@ bool resample(syntax_node<Semantics>** syntax,
 		free(*syntax[i]);
 
 		/* perform block sampling */
-		if (!sample(syntax[i], G, parse_chart, logical_forms[i], sentences[i]))
+		if (!sample(syntax[i], G, parse_chart, logical_forms[i], sentences[i], morphology_parser))
 			return false;
 
 		/* compute the (fully factorized) probability of the new tree */
@@ -3921,11 +3921,13 @@ bool resample(syntax_node<Semantics>** syntax,
 	return true;
 }
 
-template<bool AllowAmbiguous, typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, typename Semantics,
+	typename Distribution, typename Morphology>
 bool reparse(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const string** token_map,
 	unsigned int nonterminal = 1)
 {
@@ -3935,7 +3937,7 @@ bool reparse(syntax_node<Semantics>*& syntax,
 	/* first compute upper bounds on the inner probabilities */
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
 			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
-	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence) != PARSE_SUCCESS)
+	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence, morphology_parser) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
@@ -3954,7 +3956,7 @@ bool reparse(syntax_node<Semantics>*& syntax,
 	}
 	parse_chart.compute_max_inner_probabilities(sentence.length, G.nonterminals.length);
 
-	parse_result result = parse<AllowAmbiguous, true>(G, parse_chart, logical_form, sentence);
+	parse_result result = parse<AllowAmbiguous, true>(G, parse_chart, logical_form, sentence, morphology_parser);
 	if (result == PARSE_FAILURE) return false;
 
 	/* return the best parse */
@@ -4010,7 +4012,7 @@ bool remove_subtree(
 	if (syntax->children != NULL) {
 		for (unsigned int i = 0; i < syntax->right.length; i++) {
 			Semantics transformed;
-			if (!apply(syntax->right.functions[i], logical_form, transformed))
+			if (!apply(syntax->right.transformations[i], logical_form, transformed))
 				return false;
 
 			if (subtree_depth == 0) {
@@ -4046,7 +4048,7 @@ unsigned int add_subtree(
 	unsigned int width = 0;
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
 		Semantics transformed;
-		if (!apply(syntax->right.functions[i], logical_form, transformed)) {
+		if (!apply(syntax->right.transformations[i], logical_form, transformed)) {
 			fprintf(stderr, "add_subtree ERROR: Unable to transform logical form.\n");
 			return false;
 		}
@@ -4091,7 +4093,7 @@ bool add_tree_to_queue(
 
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
 		Semantics transformed; unsigned int child_depth = 0;
-		if (!apply(syntax->right.functions[i], logical_form, transformed)
+		if (!apply(syntax->right.transformations[i], logical_form, transformed)
 		 || !add_tree_to_queue(queue, syntax->children[i], transformed, syntax->right.nonterminals[i], child_depth, subtree_depth))
 			return false;
 		depth = max(depth, child_depth + 1);
@@ -4144,7 +4146,7 @@ bool resample_locally(syntax_node<Semantics>*& syntax,
 					continue;
 
 				Semantics transformed;
-				apply(node->right.functions[i], logical_form, transformed);
+				apply(node->right.transformations[i], logical_form, transformed);
 				queue.add({node->right.nonterminals[i], node->children[i], transformed});
 			}
 		}*/
@@ -4169,7 +4171,7 @@ bool find_subtrees(
 	unsigned int descendant_subtree_count = 0;
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
 		Semantics transformed;
-		if (!apply(syntax->right.functions[i], logical_form, transformed)
+		if (!apply(syntax->right.transformations[i], logical_form, transformed)
 		 || !find_subtrees(syntax->children[i], subtree, transformed, queue, descendant_subtree_count, syntax->right.nonterminals[i]))
 			return false;
 	}
@@ -4277,7 +4279,8 @@ inline double compute_inner_probability(
 	return inner;
 }
 
-template<bool AllowAmbiguous, bool Quiet, unsigned int K = 1, typename Semantics, typename Distribution>
+template<bool AllowAmbiguous, bool Quiet, unsigned int K = 1,
+	typename Semantics, typename Distribution, typename Morphology>
 bool parse(
 	syntax_node<Semantics>* syntax,
 	unsigned int& derivation_count,
@@ -4285,13 +4288,14 @@ bool parse(
 	Semantics* logical_form_output,
 	grammar<Semantics, Distribution>& G,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	const string** token_map,
 	unsigned int time_limit = UINT_MAX)
 {
 	/* first compute upper bounds on the inner probabilities */
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
 			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
-	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form_input, sentence, time_limit) != PARSE_SUCCESS)
+	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form_input, sentence, morphology_parser, time_limit) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
@@ -4310,7 +4314,7 @@ bool parse(
 	}
 	parse_chart.compute_max_inner_probabilities(sentence.length, G.nonterminals.length);
 
-	parse_result result = parse<AllowAmbiguous, Quiet, K>(G, parse_chart, logical_form_input, sentence, time_limit);
+	parse_result result = parse<AllowAmbiguous, Quiet, K>(G, parse_chart, logical_form_input, sentence, morphology_parser, time_limit);
 	if (result == PARSE_FAILURE)
 		return false;
 
@@ -4328,12 +4332,14 @@ bool parse(
 	return true;
 }
 
-template<unsigned int K = 1, typename Semantics, typename Distribution>
+template<unsigned int K = 1, typename Semantics,
+	typename Distribution, typename Morphology>
 bool generate(
 	syntax_node<Semantics>* syntax,
 	unsigned int& derivation_count,
 	const Semantics& logical_form,
 	grammar<Semantics, Distribution>& G,
+	const Morphology& morphology_parser,
 	hash_map<string, unsigned int>& token_map,
 	unsigned int time_limit = UINT_MAX)
 {
@@ -4344,7 +4350,7 @@ bool generate(
 		cell_list<MODE_GENERATE, Semantics>& cells = parse_chart.get_cells(k + 1, {0, 0});
 		cells.set_inner_probability(0.0);
 	}
-	parse_result result = parse<false, true, K>(G, parse_chart, logical_form, empty_sentence, time_limit);
+	parse_result result = parse<false, true, K>(G, parse_chart, logical_form, empty_sentence, morphology_parser, time_limit);
 	if (result == PARSE_FAILURE || result == PARSE_TIME_EXCEEDED)
 		return false;
 
@@ -4389,15 +4395,16 @@ inline void free_queue(array<branch_and_bound_state<Semantics>>& queue) {
 	}
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename Morphology>
 inline bool bound(
-		double& upper_bound, const Semantics& set,
-		grammar<Semantics, Distribution>& G,
-		tokenized_sentence<Semantics>& sentence)
+	double& upper_bound, const Semantics& set,
+	grammar<Semantics, Distribution>& G,
+	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser)
 {
 	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
 			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length);
-	if (!parse(G, syntax_chart, set, sentence))
+	if (!parse(G, syntax_chart, set, sentence, morphology_parser))
 		return false;
 
 	bool contains;
@@ -4412,11 +4419,11 @@ inline bool bound(
 
 template<typename Semantics, typename Distribution>
 bool bound(array<Semantics*>& sets,
-		grammar<Semantics, Distribution>& G,
-		tokenized_sentence<Semantics>& sentence,
-		double log_probability_bound,
-		array<branch_and_bound_state<Semantics>>& queue,
-		std::mutex& queue_lock)
+	grammar<Semantics, Distribution>& G,
+	tokenized_sentence<Semantics>& sentence,
+	double log_probability_bound,
+	array<branch_and_bound_state<Semantics>>& queue,
+	std::mutex& queue_lock)
 {
 	queue_lock.lock();
 	if (!queue.ensure_capacity(queue.length + sets.length)) {
@@ -4443,13 +4450,15 @@ bool bound(array<Semantics*>& sets,
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename... Args>
+template<typename Semantics, typename Distribution,
+	typename Morphology, typename... Args>
 bool parse_branch_and_bound(
 	syntax_node<Semantics>& syntax,
 	Semantics& logical_form,
 	array<Semantics*>& initial_partition,
 	grammar<Semantics, Distribution>& G,
 	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	Args&&... split_args)
 {
 	initialize_any(logical_form);
@@ -4512,7 +4521,7 @@ bool parse_branch_and_bound(
 				}
 			}
 
-			if (!parse(G, parse_chart, *unambiguous_sets[i], sentence))
+			if (!parse(G, parse_chart, *unambiguous_sets[i], sentence, morphology_parser))
 				return false;
 			free(*unambiguous_sets[i]);
 			free(unambiguous_sets[i]);
