@@ -1426,7 +1426,8 @@ bool is_parseable(
 	/* TODO: make the error messages more informative */
 	if (!syntax.right.is_terminal()) {
 		for (unsigned int i = 0; i < syntax.right.length; i++) {
-			Semantics child_logical_form, child_logical_form_set;
+			Semantics& child_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
+			Semantics& child_logical_form_set = *((Semantics*) alloca(sizeof(Semantics)));
 			if (!apply(syntax.right.transformations[i], logical_form_set, child_logical_form_set)) {
 				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
 				print(syntax.right.transformations[i], stderr); print("' to logical form set ", stderr);
@@ -1449,6 +1450,7 @@ bool is_parseable(
 				print(logical_form_set, stderr, printers.key); print(" to obtain logical form set ", stderr);
 				print(child_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
+				free(child_logical_form); free(child_logical_form_set);
 				return false;
 			} else if (!is_parseable(*syntax.children[i], child_logical_form, G, child_logical_form_set, printers, token_map, child_prior, syntax.right.nonterminals[i])) {
 				free(child_logical_form_set);
@@ -1459,7 +1461,7 @@ bool is_parseable(
 
 			/* invert the child logical form set */
 			/* TODO: make this work with more general invert iterators */
-			Semantics* inverse; unsigned int inverse_count;
+			Semantics* inverse = nullptr; unsigned int inverse_count;
 			if (!invert(inverse, inverse_count, syntax.right.transformations[i], logical_form_set, child_logical_form_set) || inverse_count == 0) {
 				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
 				print(syntax.right.transformations[i], stderr); print("' at rule: ", stderr);
@@ -1467,11 +1469,18 @@ bool is_parseable(
 				print("Tried to invert ", stderr); print(child_logical_form_set, stderr, printers.key);
 				print(" and intersect with ", stderr); print(logical_form_set, stderr, printers.key); print(".\n", stderr);
 				free(child_logical_form_set);
+				if (inverse != nullptr) {
+					for (unsigned int j = 0; j < inverse_count; j++)
+						free(inverse[j]);
+					free(inverse);
+				}
 				return false;
 			}
 			free(child_logical_form_set);
 			free(logical_form_set);
 			logical_form_set = inverse[0];
+			for (unsigned int j = 0; j < inverse_count; j++)
+				free(inverse[j]);
 			free(inverse);
 
 			double new_prior = log_probability<false>(logical_form_set);
@@ -1670,7 +1679,7 @@ inline void is_separable(
 
 struct dummy_morphology_parser { };
 
-template<typename EmitRootFunction, typename PartOfSpeechType>
+template<bool First, typename EmitRootFunction, typename PartOfSpeechType>
 inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const null_semantics& logical_form, EmitRootFunction emit_root)

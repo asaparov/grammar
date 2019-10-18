@@ -1605,7 +1605,7 @@ void is_separable(
 	}
 }
 
-template<typename EmitRootFunction, typename PartOfSpeechType>
+template<bool First, typename EmitRootFunction, typename PartOfSpeechType>
 inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const tree_semantics& logical_form, EmitRootFunction emit_root)

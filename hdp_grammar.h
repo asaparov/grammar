@@ -1608,7 +1608,7 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 				expected_feature, expected_excluded, expected_excluded_count))
 		{
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
-			print(distribution.feature_sequence[i], stderr);
+			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from ground truth logical form at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
@@ -1619,13 +1619,13 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		unsigned int excluded_count;
 		if (!get_feature(distribution.feature_sequence[i], logical_form_set, feature, excluded, excluded_count)) {
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
-			print(distribution.feature_sequence[i], stderr);
+			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
 		} else if (!is_subset(expected_feature, expected_excluded, expected_excluded_count, feature, excluded, excluded_count)) {
 			print("is_parseable ERROR: The semantic feature '", stderr);
-			print(distribution.feature_sequence[i], stderr);
+			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' of the ground truth logical form is not a subset of that of the logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
@@ -1635,13 +1635,13 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		if (expected_feature == ALL_EXCEPT) {
 			if (!exclude_features(distribution.feature_sequence[i], logical_form_set, expected_excluded, expected_excluded_count)) {
 				print("is_parseable ERROR: Unable to exclude semantic feature '", stderr);
-				print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);
+				Semantics::print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
 				return false;
 			}
 		} else if (!set_feature(distribution.feature_sequence[i], logical_form_set, expected_feature)) {
 			fprintf(stderr, "is_parseable ERROR: Unable to set semantic feature '");
-			print(distribution.feature_sequence[i], stderr); print("' for logical form ", stderr);
+			Semantics::print(distribution.feature_sequence[i], stderr); print("' for logical form ", stderr);
 			print(old_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;

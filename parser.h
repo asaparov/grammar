@@ -729,7 +729,7 @@ inline bool init(
 	for (unsigned int i = 0; i < posterior_length; i++) {
 		posterior[i].log_probability += inner_probability;
 		double old_prior = 0.0;
-		if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+		if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 			old_prior = min(log_probability<false>(posterior[i].object), cell->prior_probability);
 		if (USE_NONTERMINAL_PREITERATOR) {
 			double right, prior = old_prior;
@@ -1383,7 +1383,7 @@ struct cell_value {
 		for (; completed_derivations < completed.length; completed_derivations++) {
 			const auto& parse = completed[completed_derivations];
 			double total_log_probability = parse.log_probability;
-			if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+			if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 				total_log_probability += log_probability<true>(parse.logical_form_set);
 			unsigned int index = linear_search(best_derivation_probabilities, total_log_probability, 0, K);
 			if (index == 0 || (!AllowAmbiguous && is_ambiguous(parse.logical_form_set)))
@@ -1406,7 +1406,7 @@ struct cell_value {
 
 		for (const nonterminal_state<Mode, Semantics>& parse : completed) {
 			double total_log_probability = parse.log_probability;
-			if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+			if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 				total_log_probability += log_probability<true>(parse.logical_form_set);
 			if (AllowAmbiguous || !is_ambiguous(parse.logical_form_set))
 				derivations.add({total_log_probability, &parse});
@@ -1934,8 +1934,10 @@ void right_probability(const rule<Semantics>& r,
 	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
 	is_separable(r.transformations, r.length, separable);
 
-	Semantics next_logical_form;
-	if (separable[0] && !apply(r.transformations[0], logical_form_set, next_logical_form)) {
+	Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
+	if (!separable[0]) {
+		initialize_any(next_logical_form);
+	} else if (!apply(r.transformations[0], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		return;
 	}
@@ -1947,6 +1949,7 @@ void right_probability(const rule<Semantics>& r,
 		double inner_right, inner_prior, initial_prior;
 		inner_probability(parse_chart, r.nonterminals[0],
 				next_logical_form, {start, end}, inner_right, inner_prior, initial_prior);
+		free(next_logical_form);
 		if (is_negative_inf(inner_prior)) { right = -std::numeric_limits<double>::infinity(); right_prior = right; return; }
 		right_prior = min(right_prior, !separable[0] * inner_prior);
 		right = inner_right + right_prior + separable[0] * (inner_prior - initial_prior);
@@ -1963,8 +1966,10 @@ void right_probability(const rule<Semantics>& r,
 	double* next_additive_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	for (unsigned int i = 1; i + 1 < r.length; i++) {
-		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[i] && !apply(r.transformations[i], logical_form_set, next_logical_form)) {
+		free(next_logical_form);
+		if (!separable[i]) {
+			initialize_any(next_logical_form);
+		} else if (!apply(r.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
 		update_message(r, parse_chart, next_logical_form, i, start, end, message, additive_priors,
@@ -1972,12 +1977,15 @@ void right_probability(const rule<Semantics>& r,
 		swap(message, next_message); swap(additive_priors, next_additive_priors); swap(right_priors, next_right_priors);
 	}
 
-	free(next_logical_form); initialize_any(next_logical_form);
-	if (separable[r.length - 1] && !apply(r.transformations[r.length - 1], logical_form_set, next_logical_form)) {
+	free(next_logical_form);
+	if (!separable[r.length - 1]) {
+		initialize_any(next_logical_form);
+	} else if (!apply(r.transformations[r.length - 1], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity(); return;
 	}
 	update_message_k(parse_chart, next_logical_form, r.nonterminals[r.length - 1], start, end, message,
 			additive_priors, right_priors, next_message, next_additive_priors, next_right_priors, end - start, separable);
+	free(next_logical_form);
 
 	right_prior = right_priors[end - start];
 	right = next_message[end - start] + right_prior + additive_priors[end - start];
@@ -1995,7 +2003,7 @@ void right_probability(const rule<Semantics>& r,
 {
 	right = 0.0;
 	for (unsigned int i = 0; i < r.length; i++) {
-		Semantics next_logical_form;
+		Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(r.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
@@ -2003,6 +2011,7 @@ void right_probability(const rule<Semantics>& r,
 
 		double inner, initial_prior;
 		inner_probability(parse_chart, r.nonterminals[i], next_logical_form, {0, 0}, inner, right_prior, initial_prior);
+		free(next_logical_form);
 		right += inner;
 	}
 }
@@ -2042,10 +2051,10 @@ void right_probability(
 	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
 	is_separable(r.transformations, r.length, separable);
 
-	Semantics next_logical_form; initialize_any(next_logical_form);
-	if (!IgnoreNext && separable[rule.rule_position]
-	 && !apply(r.transformations[rule.rule_position], rule.logical_form_set, next_logical_form))
-	{
+	Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
+	if (IgnoreNext || !separable[rule.rule_position]) {
+		initialize_any(next_logical_form);
+	} else if (!apply(r.transformations[rule.rule_position], rule.logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		return;
 	}
@@ -2064,6 +2073,7 @@ void right_probability(
 		additive_prior = separable[rule.rule_position] * (inner_prior - initial_prior);
 		right_prior = min(old_prior, !separable[rule.rule_position] * inner_prior);
 		if (rule_position == r.length) {
+			free(next_logical_form);
 			right = right_prior + additive_prior;
 			return;
 		}
@@ -2074,12 +2084,15 @@ void right_probability(
 	unsigned int end = rule.positions[r.length];
 	if (rule_position + 1 == r.length) {
 		/* this is the last nonterminal in this rule */
-		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[rule_position] && !apply(r.transformations[rule_position], rule.logical_form_set, next_logical_form)) {
+		free(next_logical_form);
+		if (!separable[rule_position]) {
+			initialize_any(next_logical_form);
+		} else if (!apply(r.transformations[rule_position], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
 		inner_probability(parse_chart, r.nonterminals[rule_position],
 				next_logical_form, {start, end}, inner_right, inner_prior, initial_prior);
+		free(next_logical_form);
 		if (is_negative_inf(inner_prior)) { right = -std::numeric_limits<double>::infinity(); right_prior = right; return; }
 		right_prior = min(right_prior, -additive_prior + !separable[rule_position] * inner_prior);
 		additive_prior += separable[rule_position] * (inner_prior - initial_prior);
@@ -2098,8 +2111,10 @@ void right_probability(
 	double* next_additive_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	for (unsigned int i = rule_position + 1; i + 1 < r.length; i++) {
-		free(next_logical_form); initialize_any(next_logical_form);
-		if (separable[i] && !apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
+		free(next_logical_form);
+		if (!separable[i]) {
+			initialize_any(next_logical_form);
+		} else if (!apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			free(message); free(next_message);
 			free(additive_priors); free(next_additive_priors);
@@ -2111,8 +2126,10 @@ void right_probability(
 		swap(message, next_message); swap(additive_priors, next_additive_priors); swap(right_priors, next_right_priors);
 	}
 
-	free(next_logical_form); initialize_any(next_logical_form);
-	if (separable[r.length - 1] && !apply(r.transformations[r.length - 1], rule.logical_form_set, next_logical_form)) {
+	free(next_logical_form);
+	if (!separable[r.length - 1]) {
+		initialize_any(next_logical_form);
+	} else if (!apply(r.transformations[r.length - 1], rule.logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		free(message); free(next_message);
 		free(additive_priors); free(next_additive_priors);
@@ -2121,6 +2138,7 @@ void right_probability(
 	}
 	update_message_k(parse_chart, next_logical_form, r.nonterminals[r.length - 1], start, end, message,
 			additive_priors, right_priors, next_message, next_additive_priors, next_right_priors, end - start, separable);
+	free(next_logical_form);
 
 	right_prior = right_priors[end - start];
 	right = next_message[end - start] + right_prior + additive_priors[end - start];
@@ -2139,7 +2157,7 @@ void right_probability(
 	unsigned int start = rule.rule_position + (IgnoreNext ? 1 : 0);
 	const ::rule<Semantics>& r = rule.syntax.get_rule();
 	for (unsigned int i = start; i < r.length; i++) {
-		Semantics next_logical_form;
+		Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
@@ -2147,6 +2165,7 @@ void right_probability(
 
 		double inner, initial_prior, inner_prior;
 		inner_probability(parse_chart, r.nonterminals[i], next_logical_form, {0, 0}, inner, inner_prior, initial_prior);
+		free(next_logical_form);
 		right_prior = min(right_prior, inner_prior);
 		if (IgnoreNext || i > start) right += inner;
 	}
@@ -2298,7 +2317,7 @@ inline double compute_priority(
 	chart<Mode, Semantics>& parse_chart,
 	NonterminalType& N)
 {
-	Semantics logical_form;
+	Semantics& logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	const rule<Semantics>& r = state.syntax.get_rule();
 	if (!apply(r.transformations[state.rule_position], state.logical_form_set, logical_form))
 		return 0.0;
@@ -2316,6 +2335,7 @@ inline double compute_priority(
 	double inner, inner_prior, initial_prior;
 	inner_probability(parse_chart, r.nonterminals[state.rule_position],
 			logical_form, positions, inner, inner_prior, initial_prior);
+	free(logical_form);
 
 	double outer, outer_prior;
 	outer_probability<false>(state, parse_chart, N, old_prior, outer, outer_prior);
@@ -2660,7 +2680,7 @@ inline bool push_nonterminal_iterator(
 					return true;
 				if (USE_NONTERMINAL_PREITERATOR) {
 					double prior = 0.0;
-					if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+					if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 						prior = min(log_probability<false>(logical_form_set), cell.prior_probability);
 					unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
 					unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.length];
@@ -2742,7 +2762,13 @@ inline bool push_nonterminal_iterator(
 		};
 
 	if (r.is_terminal()) {
-		return morphology_parse(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
+#if !defined(NDEBUG)
+		if (Mode == MODE_GENERATE)
+			fprintf(stderr, "push_nonterminal_iterator WARNING: `Mode` shouldn't be GENERATE here.\n");
+#endif
+		if (positions[0] == 0)
+			return morphology_parse<true>(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
+		else return morphology_parse<false>(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
 	} else {
 		return push_iterator(r, syntax, logical_form_set);
 	}
@@ -2850,7 +2876,8 @@ bool complete_invert_state(
 				new_rule->positions[rule_position + 1] = next_end;
 			new_rule->rule_position = rule_position;
 			new_rule->log_probability = inner_probability;
-			new_rule->logical_form_set = logical_form;
+			if (Mode != MODE_COMPUTE_BOUNDS)
+				new_rule->logical_form_set = logical_form;
 
 			parser_search_state<Mode, Semantics> state;
 			state.rule = new_rule;
@@ -2871,7 +2898,7 @@ bool complete_invert_state(
 	if (!add_child(new_syntax, syntax, completed_rule.rule_position))
 		return false;
 	double old_prior = 0.0;
-	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 		old_prior = min(log_probability<false>(logical_form), completed_rule.cell->prior_probability);
 	if (USE_NONTERMINAL_PREITERATOR) {
 		return complete_nonterminal(
@@ -2897,11 +2924,14 @@ inline bool complete_invert_state(
 	const Morphology& morphology_parser,
 	const invert_iterator_state<Mode, Semantics>& state)
 {
-	Semantics logical_form;
+	Semantics& logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	if (Mode != MODE_COMPUTE_BOUNDS)
 		logical_form = state.inverse[state.index];
-	return complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence,
+	bool result = complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence,
 			morphology_parser, *state.rule, state.syntax, logical_form, state.log_probability);
+	if (Mode != MODE_COMPUTE_BOUNDS)
+		free(logical_form);
+	return result;
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
@@ -2947,26 +2977,27 @@ bool check_invariants(
 	bool* separable = (bool*) alloca(sizeof(bool) * rule.syntax.get_rule().length);
 	is_separable(rule.syntax.get_rule().transformations, rule.syntax.get_rule().length, separable);
 	if (separable[rule.rule_position]) {
-		Semantics transformed;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(transformation, rule.logical_form_set, transformed)) {
 			fprintf(stderr, "check_prior_invariants ERROR: Unable to apply semantic transformation function.\n");
 			return false;
 		}
 
-		if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE
+		if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS
 		 && log_probability<false>(new_logical_form) > log_probability<false>(rule.logical_form_set)
 		  - log_probability<false>(transformed) + log_probability<false>(child_logical_form) + 1.0e-12)
 		{
 			print("check_invariants WARNING: Prior probability invariant violated for separable transformation.\n", stderr);
 			valid = false;
 		}
+		free(transformed);
 	}
 
-	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE
+	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS
 	 && log_probability<false>(new_logical_form) > log_probability<false>(child_logical_form)) {
 		print("check_invariants WARNING: Prior of new logical form is greater than the prior of the child logical form.\n", stderr);
 		valid = false;
-	} if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE
+	} if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS
 	   && log_probability<false>(new_logical_form) > log_probability<false>(rule.logical_form_set)) {
 		print("check_invariants WARNING: Prior of new logical form is greater than the prior of the old logical form.\n", stderr);
 		valid = false;
@@ -3012,7 +3043,7 @@ inline void check_log_likelihood(
 {
 	double expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, token_map, nonterminal_id);
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
-		fprintf(stderr, "compute_nonterminal WARNING: The computed log likelihood is incorrect.\n");
+		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect.\n");
 		print(logical_form_set, stderr, *debug_terminal_printer); print("\n", stderr);
 		print(syntax.get_tree(), stderr, *debug_nonterminal_printer, *debug_terminal_printer, nonterminal_id); print("\n", stderr);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
@@ -3031,18 +3062,19 @@ inline void check_log_likelihood(
 	double expected_log_likelihood = 0.0;
 	double computed_log_likelihood = inverse.log_probability - min(log_probability<false>(inverse.inverse[inverse.index]), state.cell->prior_probability);
 	for (unsigned int i = 0; i < state.rule_position; i++) {
-		Semantics transformed;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(state.syntax.get_rule().transformations[i], *inverse.inverse[inverse.index], transformed)) {
 			//fprintf(stderr, "check_log_likelihood WARNING: Unable to apply semantic transformation function at rule position %u.\n", i);
 			//print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
 			return;
 		}
 		expected_log_likelihood += log_probability(G, *(state.syntax.get_tree().children[i]), transformed, token_map, state.syntax.get_rule().nonterminals[i]);
+		free(transformed);
 	}
 	expected_log_likelihood += log_probability(G, inverse.syntax.get_tree(), child_logical_form_set, token_map, state.syntax.get_rule().nonterminals[state.rule_position]);
 
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
-		fprintf(stderr, "compute_nonterminal WARNING: The computed log likelihood is incorrect.\n");
+		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect.\n");
 		print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
@@ -3265,7 +3297,7 @@ bool process_rule_state(
 	}
 
 	/* apply the semantic transformation paired with the next nonterminal */
-	Semantics expanded_logical_forms;
+	Semantics& expanded_logical_forms = *((Semantics*) alloca(sizeof(Semantics)));
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
 	 && !apply(state.syntax.get_rule().transformations[state.rule_position],
 		 state.logical_form_set, expanded_logical_forms))
@@ -3279,6 +3311,8 @@ bool process_rule_state(
 		/* the next token is a subtree */
 		double log_probability = sentence.subtree_probability(
 				G, next_nonterminal, expanded_logical_forms, position.start);
+		if (Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
+			free(expanded_logical_forms);
 		if (is_negative_inf(log_probability))
 			return true;
 		return complete_invert_state<AllowAmbiguous>(
@@ -3295,7 +3329,10 @@ bool process_rule_state(
 					queue, G, parse_chart, sentence, morphology_parser,
 					cell, state, logical_form_set, position, prior);
 		};
-	return cells.expand_cells(expanded_logical_forms, expand_cell);
+	bool result = cells.expand_cells(expanded_logical_forms, expand_cell);
+	if (Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
+		free(expanded_logical_forms);
+	return result;
 }
 
 template<typename Semantics, typename Distribution>
@@ -3367,7 +3404,7 @@ bool process_nonterminal_iterator(
 	}
 
 	double old_prior = 0.0;
-	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE)
+	if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 		old_prior = min(log_probability<false>(logical_form), iterator.cell->prior_probability);
 	if (USE_NONTERMINAL_PREITERATOR) {
 		double right, prior = old_prior;
@@ -3430,7 +3467,7 @@ bool sample(
 
 		/* recursively sample the descendant nodes */
 		for (unsigned int i = 0; i < nonterminal.syntax.r.length; i++) {
-			Semantics transformed;
+			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 			if (!apply(nonterminal.syntax.r.transformations[i], logical_form, transformed))
 				return false;
 
@@ -3458,10 +3495,12 @@ bool sample(
 					parse_chart.get_cells(next_nonterminal, {start, end});
 			if (!cells.map_cells(transformed, sample_cell))
 			{
+				free(transformed);
 				free(*syntax); free(syntax);
 				syntax = NULL;
 				return false;
 			}
+			free(transformed);
 		}
 		return true;
 	}
@@ -3796,13 +3835,17 @@ bool sample_chart(unsigned int nonterminal_id,
 				continue;
 			}
 
-			Semantics transformed;
+			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 			if (!apply(syntax.right.transformations[i], logical_form, transformed))
 				return false;
 
 			if (!sample_chart(syntax.right.nonterminals[i],
 				*syntax.children[i], G, parse_chart, transformed, k, end))
+			{
+				free(transformed);
 				return false;
+			}
+			free(transformed);
 			k = end;
 		}
 	}
@@ -4011,7 +4054,7 @@ bool remove_subtree(
 
 	if (syntax->children != NULL) {
 		for (unsigned int i = 0; i < syntax->right.length; i++) {
-			Semantics transformed;
+			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 			if (!apply(syntax->right.transformations[i], logical_form, transformed))
 				return false;
 
@@ -4026,8 +4069,10 @@ bool remove_subtree(
 			} else if (!remove_subtree(syntax->children[i],
 					transformed, subtree_depth - 1, tokens, queue))
 			{
+				free(transformed);
 				return false;
 			}
+			free(transformed);
 		}
 	}
 	return true;
@@ -4047,7 +4092,7 @@ unsigned int add_subtree(
 
 	unsigned int width = 0;
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
-		Semantics transformed;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(syntax->right.transformations[i], logical_form, transformed)) {
 			fprintf(stderr, "add_subtree ERROR: Unable to transform logical form.\n");
 			return false;
@@ -4066,6 +4111,7 @@ unsigned int add_subtree(
 			queue[queue.length].nonterminal = syntax->right.nonterminals[i];
 			queue[queue.length].node = syntax->children[i];
 			queue[queue.length].logical_form = transformed;
+			free(transformed);
 			if (!add_tree(
 					queue[queue.length].nonterminal, *queue[queue.length].node,
 					queue[queue.length].logical_form, G, dummy))
@@ -4073,6 +4119,7 @@ unsigned int add_subtree(
 			queue.length++;
 		} else {
 			width += add_subtree(G, syntax->children[i], transformed, tokens, queue, index + width);
+			free(transformed);
 		}
 	}
 	return width;
@@ -4092,10 +4139,12 @@ bool add_tree_to_queue(
 	//syntax->reference_count++;
 
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
-		Semantics transformed; unsigned int child_depth = 0;
+		unsigned int child_depth = 0;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(syntax->right.transformations[i], logical_form, transformed)
 		 || !add_tree_to_queue(queue, syntax->children[i], transformed, syntax->right.nonterminals[i], child_depth, subtree_depth))
 			return false;
+		free(transformed);
 		depth = max(depth, child_depth + 1);
 	}
 	return (depth < subtree_depth + 1 || queue.add({nonterminal, syntax, logical_form}));
@@ -4145,9 +4194,10 @@ bool resample_locally(syntax_node<Semantics>*& syntax,
 				if (node->children[i]->is_terminal())
 					continue;
 
-				Semantics transformed;
-				apply(node->right.transformations[i], logical_form, transformed);
+				Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
+				apply(node->right.transformations[i], logical_form, transformed); // TODO: if this returns false, `transformed` is uninitialized
 				queue.add({node->right.nonterminals[i], node->children[i], transformed});
+				free(transformed);
 			}
 		}*/
 		break;
@@ -4170,10 +4220,11 @@ bool find_subtrees(
 	unsigned int old_queue_length = queue.length;
 	unsigned int descendant_subtree_count = 0;
 	for (unsigned int i = 0; i < syntax->right.length; i++) {
-		Semantics transformed;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(syntax->right.transformations[i], logical_form, transformed)
 		 || !find_subtrees(syntax->children[i], subtree, transformed, queue, descendant_subtree_count, syntax->right.nonterminals[i]))
 			return false;
+		free(transformed);
 	}
 
 	if (syntax->right == subtree) {

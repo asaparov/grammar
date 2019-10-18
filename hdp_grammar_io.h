@@ -871,22 +871,22 @@ bool read_preterminal_rule(
 	return true;
 }
 
-template<typename Semantics>
-bool read_transformation(const array<grammar_token>& tokens,
+template<typename Semantics, typename TokenType, TokenType ColonToken, TokenType CommaToken, TokenType IdentifierToken>
+bool read_transformation(const array<lexical_token<TokenType>>& tokens,
 		unsigned int& index, transformation<Semantics>& t)
 {
 	typedef typename Semantics::function function;
 	array<function>& functions = *((array<function>*) alloca(sizeof(array<function>)));
 	if (!array_init(functions, 4)) return false;
-	if (index < tokens.length && tokens[index].type == GRAMMAR_COLON) {
+	if (index < tokens.length && tokens[index].type == ColonToken) {
 		index++;
 		while (true) {
 			if (!functions.ensure_capacity(functions.length + 1))
 				return false;
 
-			if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "semantic transformation function in right-hand side token"))
+			if (!expect_token(tokens, index, IdentifierToken, "semantic transformation function in right-hand side token"))
 				return false;
-			const grammar_token& transform = tokens[index];
+			const lexical_token<TokenType>& transform = tokens[index];
 			index++;
 
 			if (!Semantics::interpret(functions[functions.length], transform.text)) {
@@ -898,7 +898,7 @@ bool read_transformation(const array<grammar_token>& tokens,
 			}
 			functions.length++;
 
-			if (index >= tokens.length || tokens[index].type != GRAMMAR_COMMA)
+			if (index >= tokens.length || tokens[index].type != CommaToken)
 				break;
 			index++;
 		}
@@ -936,7 +936,7 @@ bool read_rule(const hdp_grammar<RulePrior, Semantics>& G,
 		index++;
 
 		nonterminals[nonterminals.length++] = id;
-		if (!read_transformation(tokens, index, transformations[transformations.length]))
+		if (!read_transformation<Semantics, grammar_token_type, GRAMMAR_COLON, GRAMMAR_COMMA, GRAMMAR_IDENTIFIER>(tokens, index, transformations[transformations.length]))
 			return false;
 		transformations.length++;
 
@@ -1134,6 +1134,322 @@ bool read_grammar(
 		return false;
 	}
 	free(grammar_src);
+	return true;
+}
+
+
+/**
+ * Code for tokenizing/lexing derivation trees.
+ */
+
+enum class derivation_token_type {
+	LPAREN,
+	RPAREN,
+	TOKEN,
+	COLON,
+	COMMA,
+	STRING
+};
+
+typedef lexical_token<derivation_token_type> derivation_token;
+
+template<typename Stream>
+inline bool print(derivation_token_type type, Stream& stream) {
+	switch (type) {
+	case derivation_token_type::LPAREN:
+		return print('(', stream);
+	case derivation_token_type::RPAREN:
+		return print(')', stream);
+	case derivation_token_type::COLON:
+		return print(':', stream);
+	case derivation_token_type::COMMA:
+		return print(',', stream);
+	case derivation_token_type::TOKEN:
+		return print("TOKEN", stream);
+	case derivation_token_type::STRING:
+		return print("STRING", stream);
+	}
+	fprintf(stderr, "print ERROR: Unknown derivation_token_type.\n");
+	return false;
+}
+
+enum class derivation_lexer_state {
+	DEFAULT,
+	TOKEN,
+	STRING,
+	COMMENT
+};
+
+bool derivation_emit_symbol(array<derivation_token>& tokens, const position& start, char symbol) {
+	switch (symbol) {
+	case '(':
+		return emit_token(tokens, start, start + 1, derivation_token_type::LPAREN);
+	case ')':
+		return emit_token(tokens, start, start + 1, derivation_token_type::RPAREN);
+	case ':':
+		return emit_token(tokens, start, start + 1, derivation_token_type::COLON);
+	case ',':
+		return emit_token(tokens, start, start + 1, derivation_token_type::COMMA);
+	default:
+		fprintf(stderr, "derivation_emit_symbol ERROR: Unexpected symbol.\n");
+		return false;
+	}
+}
+
+template<typename Stream>
+bool derivation_lex(array<derivation_token>& tokens,
+		Stream& input, position start = position(1, 1))
+{
+	position current = start;
+	derivation_lexer_state state = derivation_lexer_state::DEFAULT;
+	array<char> token = array<char>(1024);
+
+	std::mbstate_t shift = {0};
+	wint_t next = fgetwc(input);
+	bool new_line = false;
+	while (next != WEOF) {
+		switch (state) {
+		case derivation_lexer_state::TOKEN:
+			if (next == '(' || next == ')' || next == ':' || next == ',') {
+				if (!emit_token(tokens, token, start, current, derivation_token_type::TOKEN)
+				 || !derivation_emit_symbol(tokens, current, next))
+					return false;
+				state = derivation_lexer_state::DEFAULT;
+				token.clear(); shift = {0};
+			} else if (next == '"') {
+				if (!emit_token(tokens, token, start, current, derivation_token_type::TOKEN))
+					return false;
+				state = derivation_lexer_state::STRING;
+				token.clear(); shift = {0};
+				start = current;
+			} else if (next == '#') {
+				if (!emit_token(tokens, token, start, current, derivation_token_type::TOKEN))
+					return false;
+				state = derivation_lexer_state::COMMENT;
+				token.clear(); shift = {0};
+			} else if (next == ' ' || next == '\t' || next == '\n' || next == '\r') {
+				if (!emit_token(tokens, token, start, current, derivation_token_type::TOKEN))
+					return false;
+				state = derivation_lexer_state::DEFAULT;
+				token.clear(); shift = {0};
+				new_line = (next == '\n');
+			} else {
+				if (!append_to_token(token, next, shift)) return false;
+			}
+			break;
+
+		case derivation_lexer_state::STRING:
+			if (next == '"') {
+				if (!emit_token(tokens, token, start, current, derivation_token_type::STRING))
+					return false;
+				state = derivation_lexer_state::DEFAULT;
+			} else {
+				if (!append_to_token(token, next, shift)) return false;
+				new_line = (next == '\n');
+			}
+			break;
+
+		case derivation_lexer_state::COMMENT:
+			if (next == '\n') {
+				state = derivation_lexer_state::DEFAULT;
+				new_line = true;
+			}
+			break;
+
+		case derivation_lexer_state::DEFAULT:
+			if (next == '(' || next == ')' || next == ':' || next == ',') {
+				if (!derivation_emit_symbol(tokens, current, next))
+					return false;
+			} else if (next == '"') {
+				state = derivation_lexer_state::STRING;
+				token.clear(); shift = {0};
+				start = current;
+			} else if (next == '#') {
+				state = derivation_lexer_state::COMMENT;
+				token.clear(); shift = {0};
+			} else if (next == ' ' || next == '\t' || next == '\n' || next == '\r') {
+				new_line = (next == '\n');
+			} else {
+				if (!append_to_token(token, next, shift)) return false;
+				state = derivation_lexer_state::TOKEN;
+				start = current;
+			}
+			break;
+		}
+
+		if (new_line) {
+			current.line++;
+			current.column = 1;
+			new_line = false;
+		} else current.column++;
+		next = fgetwc(input);
+	}
+
+	if (state == derivation_lexer_state::TOKEN)
+		return emit_token(tokens, token, start, current, derivation_token_type::TOKEN);
+	return true;
+}
+
+
+/**
+ * Recursive-descent parser for derivation trees.
+ */
+
+template<typename Semantics>
+bool derivation_interpret(unsigned int& root_nonterminal,
+		transformation<Semantics>& root_transform, syntax_node<Semantics>*& node,
+		array<derivation_token>& tokens, unsigned int& index,
+		hash_map<string, unsigned int>& names,
+		const hash_map<string, unsigned int>& nonterminal_names)
+{
+	bool contains;
+	if (!expect_token(tokens, index, derivation_token_type::LPAREN, "left parenthesis of derivation tree node"))
+		return false;
+	index++;
+	if (!expect_token(tokens, index, derivation_token_type::TOKEN, "nonterminal"))
+		return false;
+	root_nonterminal = nonterminal_names.get(tokens[index].text, contains);
+	if (!contains) {
+		fprintf(stderr, "ERROR at %d:%d: Undefined nonterminal '", tokens[index].start.line, tokens[index].start.column);
+		print(tokens[index].text, stderr); print("'.\n", stderr);
+		return false;
+	}
+	index++;
+
+	/* check if there is a transformation label */
+	if (!read_transformation<Semantics, derivation_token_type, derivation_token_type::COLON, derivation_token_type::COMMA, derivation_token_type::TOKEN>(tokens, index, root_transform))
+		return false;
+
+	/* check if this is a preterminal rule */
+	if (index == tokens.length) {
+		fprintf(stderr, "ERROR at %d:%d: Unexpected end of input.\n",
+				tokens[index - 1].end.line, tokens[index - 1].end.column);
+		free(root_transform);
+		return false;
+	} else if (tokens[index].type == derivation_token_type::STRING) {
+		/* this is a preterminal rule */
+		unsigned int terminal;
+		if (!get_token(tokens[index].text, terminal, names)) {
+			free(root_transform);
+			return false;
+		}
+		node = (syntax_node<Semantics>*) malloc(sizeof(syntax_node<Semantics>));
+		if (node == nullptr) {
+			free(root_transform);
+			return false;
+		} else if (!init(*node, sequence(&terminal, 1))) {
+			free(root_transform); free(node);
+			return false;
+		}
+		index++;
+		if (!expect_token(tokens, index, derivation_token_type::RPAREN, "right parenthesis of terminal node"))
+			return false;
+		index++;
+		return true;
+
+	} else if (tokens[index].type == derivation_token_type::LPAREN) {
+		array<unsigned int> child_nonterminals(4);
+		array<transformation<Semantics>> child_transforms(4);
+		array<syntax_node<Semantics>*> child_nodes(4);
+		while (true) {
+			if (!derivation_interpret(child_nonterminals[child_nonterminals.length], child_transforms[child_transforms.length], child_nodes[child_nodes.length], tokens, index, names, nonterminal_names)) {
+				for (transformation<Semantics>& transform : child_transforms) free(transform);
+				for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+				free(root_transform);
+				return false;
+			}
+			child_nonterminals.length++;
+			child_transforms.length++;
+			child_nodes.length++;
+
+			if (index == tokens.length) {
+				fprintf(stderr, "ERROR at %d:%d: Unexpected end of input. "
+						"Expected right parenthesis of derivation tree node.\n",
+						tokens[index - 1].end.line, tokens[index - 1].end.column);
+				for (transformation<Semantics>& transform : child_transforms) free(transform);
+				for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+				free(root_transform);
+				return false;
+			} else if (tokens[index].type == derivation_token_type::RPAREN) {
+				index++;
+				break;
+			} else if (!child_nonterminals.ensure_capacity(child_nonterminals.length + 1)
+					|| !child_transforms.ensure_capacity(child_transforms.length + 1)
+					|| !child_nodes.ensure_capacity(child_nodes.length + 1))
+			{
+				for (transformation<Semantics>& transform : child_transforms) free(transform);
+				for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+				free(root_transform);
+				return false;
+			}
+		}
+
+		/* we finished reading all the child nodes */
+		rule<Semantics>& r = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+		r.nonterminals = (unsigned int*) malloc(1);
+		r.transformations = (transformation<Semantics>*) malloc(1);
+		r.length = child_nodes.length;
+		if (r.nonterminals == nullptr || r.transformations == nullptr) {
+			fprintf(stderr, "derivation_interpret ERROR: Out of memory.\n");
+			if (r.nonterminals != nullptr) free(r.nonterminals);
+			for (transformation<Semantics>& transform : child_transforms) free(transform);
+			for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+			free(root_transform);
+			return false;
+		}
+		swap(r.nonterminals, child_nonterminals.data);
+		swap(r.transformations, child_transforms.data);
+
+		syntax_node<Semantics>* new_node = (syntax_node<Semantics>*) malloc(sizeof(syntax_node<Semantics>));
+		if (new_node == nullptr) {
+			fprintf(stderr, "derivation_interpret ERROR: Out of memory.\n");
+			for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+			free(r); free(root_transform);
+			return false;
+		} else if (!init(*new_node, r)) {
+			for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
+			free(r); free(root_transform); free(new_node);
+			return false;
+		}
+		swap(new_node->children, child_nodes.data);
+		free(r);
+		node = new_node;
+		return true;
+
+	} else {
+		fprintf(stderr, "ERROR at %d:%d: Unexpected symbol. Expected a "
+				"terminal or a left parenthesis of a child derivation tree node.\n",
+				tokens[index - 1].end.line, tokens[index - 1].end.column);
+		free(root_transform);
+		return false;
+	}
+}
+
+template<typename Stream, typename Semantics>
+inline bool parse(Stream& in,
+		syntax_node<Semantics>*& derivation,
+		unsigned int& root_nonterminal,
+		hash_map<string, unsigned int>& names,
+		const hash_map<string, unsigned int>& nonterminal_names,
+		position start = position(1, 1))
+{
+	array<derivation_token> tokens = array<derivation_token>(128);
+	if (!derivation_lex(tokens, in, start)) {
+		read_error("Unable to parse derivation tree (lexical analysis failed)", start);
+		free_tokens(tokens); return false;
+	}
+
+	unsigned int index = 0;
+	transformation<Semantics> root_transform;
+	if (!derivation_interpret(root_nonterminal, root_transform, derivation, tokens, index, names, nonterminal_names)) {
+		read_error("Unable to parse derivation tree", start);
+		free_tokens(tokens); return false;
+	}
+	free_tokens(tokens);
+
+	if (root_transform.function_count != 1 || root_transform.functions[0] != Semantics::default_function())
+		fprintf(stderr, "WARNING at %d:%d: Unexpected transformation label at root of derivation tree.\n", start.line, start.column);
+	free(root_transform);
 	return true;
 }
 
