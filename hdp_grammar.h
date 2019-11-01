@@ -869,22 +869,8 @@ bool get_features(feature_set& set, const Semantics& logical_form,
 {
 	for (unsigned int i = 0; i < feature_count; i++)
 	{
-		unsigned int* excluded;
-		unsigned int excluded_count = 0;
-		if (!get_feature(features[i], logical_form, set.features[i], excluded, excluded_count))
+		if (!get_feature(features[i], logical_form, set.features[i], set.excluded[i], set.excluded_counts[i]))
 			return false;
-		if (excluded_count > 0) {
-			if (set.excluded_counts[i] == 0) set.excluded[i] = NULL;
-			unsigned int* new_excluded = (unsigned int*)
-				realloc(set.excluded[i], sizeof(unsigned int) * excluded_count);
-			if (new_excluded == NULL) {
-				fprintf(stderr, "get_features ERROR: Out of memory.\n");
-				return false;
-			}
-			memcpy(new_excluded, excluded, sizeof(unsigned int) * excluded_count);
-			set.excluded[i] = new_excluded;
-			set.excluded_counts[i] = excluded_count;
-		}
 	}
 	return true;
 }
@@ -1616,20 +1602,24 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 
 		unsigned int feature;
 		unsigned int* excluded;
-		unsigned int excluded_count;
+		unsigned int excluded_count = 0;
 		if (!get_feature(distribution.feature_sequence[i], logical_form_set, feature, excluded, excluded_count)) {
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			if (expected_excluded_count != 0) free(expected_excluded);
 			return false;
 		} else if (!is_subset(expected_feature, expected_excluded, expected_excluded_count, feature, excluded, excluded_count)) {
 			print("is_parseable ERROR: The semantic feature '", stderr);
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' of the ground truth logical form is not a subset of that of the logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			if (expected_excluded_count != 0) free(expected_excluded);
+			if (excluded_count != 0) free(excluded);
 			return false;
 		}
+		if (excluded_count != 0) free(excluded);
 
 		Semantics old_logical_form_set = logical_form_set;
 		if (expected_feature == ALL_EXCEPT) {
@@ -1637,6 +1627,7 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 				print("is_parseable ERROR: Unable to exclude semantic feature '", stderr);
 				Semantics::print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);
 				print(syntax.right, stderr, printers); print('\n', stderr);
+				if (expected_excluded_count != 0) free(expected_excluded);
 				return false;
 			}
 		} else if (!set_feature(distribution.feature_sequence[i], logical_form_set, expected_feature)) {
@@ -1644,8 +1635,10 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 			Semantics::print(distribution.feature_sequence[i], stderr); print("' for logical form ", stderr);
 			print(old_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			if (expected_excluded_count != 0) free(expected_excluded);
 			return false;
 		}
+		if (expected_excluded_count != 0) free(expected_excluded);
 	}
 	return true;
 }

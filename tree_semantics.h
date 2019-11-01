@@ -1338,14 +1338,23 @@ inline bool set_string(tree_semantics& exp, const tree_semantics& set, const seq
 	return false;
 }
 
-inline unsigned int get_label(const tree_semantics& src,
+inline bool get_label(
+	const tree_semantics& src, unsigned int& label,
 	unsigned int*& excluded, unsigned int& excluded_count)
 {
-	excluded = src.excluded;
 	excluded_count = src.excluded_count;
+	if (src.excluded_count != 0) {
+		excluded = (unsigned int*) malloc(sizeof(unsigned int) * src.excluded_count);
+		if (excluded == nullptr) {
+			fprintf(stderr, "get_label ERROR: Out of memory.\n");
+			return false;
+		}
+		memcpy(excluded, src.excluded, sizeof(unsigned int) * src.excluded_count);
+	}
 	if (src.label == LABEL_WILDCARD_TREE)
-		return LABEL_WILDCARD;
-	else return src.label;
+		label = LABEL_WILDCARD;
+	else label = src.label;
+	return true;
 }
 
 bool get_feature(
@@ -1357,21 +1366,20 @@ bool get_feature(
 {
 	switch (feature) {
 	case tree_semantics::FEATURE_LABEL:
-		value = get_label(src, excluded, excluded_count);
-		return true;
+		return get_label(src, value, excluded, excluded_count);
 	case tree_semantics::FEATURE_LABEL_LEFT:
 		if (src.label == LABEL_WILDCARD_TREE)
 			value = LABEL_WILDCARD;
 		else if (src.left_child == NULL)
 			value = LABEL_EMPTY;
-		else value = get_label(*src.left_child, excluded, excluded_count);
+		else if (!get_label(*src.left_child, value, excluded, excluded_count)) return false;
 		return true;
 	case tree_semantics::FEATURE_LABEL_RIGHT:
 		if (src.label == LABEL_WILDCARD_TREE)
 			value = LABEL_WILDCARD;
 		else if (src.right_child == NULL)
 			value = LABEL_EMPTY;
-		else value = get_label(*src.right_child, excluded, excluded_count);
+		else if (!get_label(*src.right_child, value, excluded, excluded_count)) return false;
 		return true;
 	default:
 		fprintf(stderr, "get_feature ERROR: Unrecognized feature.\n");
