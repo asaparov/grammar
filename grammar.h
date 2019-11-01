@@ -1460,7 +1460,6 @@ bool is_parseable(
 			free(child_logical_form);
 
 			/* invert the child logical form set */
-			/* TODO: make this work with more general invert iterators */
 			Semantics* inverse = nullptr; unsigned int inverse_count;
 			if (!invert(inverse, inverse_count, syntax.right.transformations[i], logical_form_set, child_logical_form_set) || inverse_count == 0) {
 				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
@@ -1478,9 +1477,25 @@ bool is_parseable(
 			}
 			free(child_logical_form_set);
 			free(logical_form_set);
-			logical_form_set = inverse[0];
-			for (unsigned int j = 0; j < inverse_count; j++)
-				free(inverse[j]);
+			/* find `j` such that `logical_form` is a subset of `inverse[j]` */
+			unsigned int j;
+			for (j = 0; j < inverse_count; j++)
+				if (is_subset(logical_form, inverse[j])) break;
+			if (j == inverse_count) {
+				print("is_parseable ERROR: The true inverse is not an element of any `inverse[j]` after inverting semantic transformation function '", stderr);
+				print(syntax.right.transformations[i], stderr); print("'.\n", stderr);
+				print("  True inverse: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
+				for (j = 0; j < inverse_count; j++) {
+					print("  inverse[", stderr); print(j, stderr); print("]: ", stderr); print(inverse[j], stderr, printers.key); print('\n', stderr);
+					free(inverse[j]);
+				}
+				free(inverse);
+				initialize_any(logical_form_set);
+				return false;
+			}
+			logical_form_set = inverse[j];
+			for (unsigned int k = 0; k < inverse_count; k++)
+				free(inverse[k]);
 			free(inverse);
 
 			double new_prior = log_probability<false>(logical_form_set);
