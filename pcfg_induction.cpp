@@ -119,19 +119,20 @@ bool initialize_tree(
 	unsigned int k = rand() % (sentence.length - 1) + 1;
 
 	rule<null_semantics>& branch = *((rule<null_semantics>*) alloca(sizeof(rule<null_semantics>)));
-	branch.length = 2;
-	branch.transformations = (transformation<null_semantics>*) malloc(sizeof(transformation<null_semantics>) * branch.length);
-	branch.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.length);
-	branch.transformations[0].function_count = 1;
-	branch.transformations[0].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.transformations[0].function_count);
-	branch.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
-	branch.transformations[1].function_count = 1;
-	branch.transformations[1].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.transformations[1].function_count);
-	branch.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
-	branch.nonterminals[0] = (k == 1)
+	branch.type = rule_type::NONTERMINAL;
+	branch.nt.length = 2;
+	branch.nt.transformations = (transformation<null_semantics>*) malloc(sizeof(transformation<null_semantics>) * branch.nt.length);
+	branch.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.nt.length);
+	branch.nt.transformations[0].function_count = 1;
+	branch.nt.transformations[0].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.nt.transformations[0].function_count);
+	branch.nt.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+	branch.nt.transformations[1].function_count = 1;
+	branch.nt.transformations[1].functions = (null_semantics::function*) malloc(sizeof(null_semantics::function) * branch.nt.transformations[1].function_count);
+	branch.nt.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
+	branch.nt.nonterminals[0] = (k == 1)
 		? initialize_preterminal({sentence.tokens, k})
 		: random_nonterminal(nonterminal_count);
-	branch.nonterminals[1] = ((sentence.length - k) == 1)
+	branch.nt.nonterminals[1] = ((sentence.length - k) == 1)
 		? initialize_preterminal({sentence.tokens + k, sentence.length - k})
 		: random_nonterminal(nonterminal_count);
 

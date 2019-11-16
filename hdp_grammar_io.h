@@ -18,6 +18,7 @@ enum grammar_token_type {
 	GRAMMAR_FLOAT,
 	GRAMMAR_COLON,
 	GRAMMAR_COMMA,
+	GRAMMAR_SLASH,
 	GRAMMAR_LEFT_BRACE,
 	GRAMMAR_RIGHT_BRACE,
 	GRAMMAR_END_STATEMENT,
@@ -44,6 +45,8 @@ bool print(const grammar_token_type& token, Stream& out) {
 		return fprintf(out, "colon") > 0;
 	case GRAMMAR_COMMA:
 		return fprintf(out, "comma") > 0;
+	case GRAMMAR_SLASH:
+		return fprintf(out, "slash") > 0;
 	case GRAMMAR_LEFT_BRACE:
 		return fprintf(out, "left curly brace") > 0;
 	case GRAMMAR_RIGHT_BRACE:
@@ -257,6 +260,11 @@ bool grammar_lex(array<grammar_token>& tokens,
 
 		case ',':
 			if (!grammar_process_symbol(tokens, input, state, start, current, token, i, char_width, GRAMMAR_COMMA))
+				return false;
+			break;
+
+		case '/':
+			if (!grammar_process_symbol(tokens, input, state, start, current, token, i, char_width, GRAMMAR_SLASH))
 				return false;
 			break;
 
@@ -831,18 +839,13 @@ inline bool emit_preterminal_token(
 	return preterminal_tokens.add(id);
 }
 
-bool read_preterminal_rule(
-		const array<grammar_token>& tokens,
-		unsigned int& index,
+inline bool read_string(const string& src,
 		array<unsigned int>& preterminal_tokens,
 		hash_map<string, unsigned int>& names)
 {
-	if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "right-hand side string"))
-		return false;
 	bool whitespace_state = true;
 	unsigned int token_start = 0;
 	string& token = *((string*) alloca(sizeof(string)));
-	const string& src = tokens[index].text;
 	for (unsigned int i = 0; i < src.length; i++) {
 		if (src.data[i] == ' ') {
 			if (!whitespace_state) {
@@ -866,7 +869,20 @@ bool read_preterminal_rule(
 		if (!emit_preterminal_token(preterminal_tokens, token, names))
 			return false;
 	}
+	return true;
+}
 
+bool read_preterminal_rule(
+		const array<grammar_token>& tokens,
+		unsigned int& index,
+		array<unsigned int>& preterminal_tokens,
+		hash_map<string, unsigned int>& names)
+{
+	if (!expect_token(tokens, index, GRAMMAR_IDENTIFIER, "right-hand side string"))
+		return false;
+	const string& src = tokens[index].text;
+	if (!read_string(src, preterminal_tokens, names))
+		return false;
 	index++;
 	return true;
 }
@@ -981,9 +997,10 @@ bool read_rule(
 		}
 
 		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
-		new_rule.length = nonterminals.length;
-		new_rule.nonterminals = nonterminals.data;
-		new_rule.transformations = transformations.data;
+		new_rule.type = rule_type::NONTERMINAL;
+		new_rule.nt.length = nonterminals.length;
+		new_rule.nt.nonterminals = nonterminals.data;
+		new_rule.nt.transformations = transformations.data;
 		bool result = add_rule(N.rule_distribution, new_rule, prior);
 		for (transformation<Semantics>& t : transformations) core::free(t);
 		return result;
@@ -992,9 +1009,11 @@ bool read_rule(
 			return false;
 
 		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
-		new_rule.length = nonterminals.length;
-		new_rule.nonterminals = nonterminals.data;
-		new_rule.transformations = nullptr;
+		new_rule.type = rule_type::TERMINAL;
+		new_rule.t.terminals = nonterminals.data;
+		new_rule.t.length = nonterminals.length;
+		new_rule.t.inflected = nullptr;
+		new_rule.t.inflected_length = 0;
 		return add_rule(N.rule_distribution, new_rule, prior);
 	}
 }
@@ -1148,6 +1167,7 @@ enum class derivation_token_type {
 	TOKEN,
 	COLON,
 	COMMA,
+	SLASH,
 	STRING
 };
 
@@ -1164,6 +1184,8 @@ inline bool print(derivation_token_type type, Stream& stream) {
 		return print(':', stream);
 	case derivation_token_type::COMMA:
 		return print(',', stream);
+	case derivation_token_type::SLASH:
+		return print('/', stream);
 	case derivation_token_type::TOKEN:
 		return print("TOKEN", stream);
 	case derivation_token_type::STRING:
@@ -1190,6 +1212,8 @@ bool derivation_emit_symbol(array<derivation_token>& tokens, const position& sta
 		return emit_token(tokens, start, start + 1, derivation_token_type::COLON);
 	case ',':
 		return emit_token(tokens, start, start + 1, derivation_token_type::COMMA);
+	case '/':
+		return emit_token(tokens, start, start + 1, derivation_token_type::SLASH);
 	default:
 		fprintf(stderr, "derivation_emit_symbol ERROR: Unexpected symbol.\n");
 		return false;
@@ -1210,7 +1234,7 @@ bool derivation_lex(array<derivation_token>& tokens,
 	while (next != WEOF) {
 		switch (state) {
 		case derivation_lexer_state::TOKEN:
-			if (next == '(' || next == ')' || next == ':' || next == ',') {
+			if (next == '(' || next == ')' || next == ':' || next == ',' || next == '/') {
 				if (!emit_token(tokens, token, start, current, derivation_token_type::TOKEN)
 				 || !derivation_emit_symbol(tokens, current, next))
 					return false;
@@ -1257,7 +1281,7 @@ bool derivation_lex(array<derivation_token>& tokens,
 			break;
 
 		case derivation_lexer_state::DEFAULT:
-			if (next == '(' || next == ')' || next == ':' || next == ',') {
+			if (next == '(' || next == ')' || next == ':' || next == ',' || next == '/') {
 				if (!derivation_emit_symbol(tokens, current, next))
 					return false;
 			} else if (next == '"') {
@@ -1328,20 +1352,40 @@ bool derivation_interpret(unsigned int& root_nonterminal,
 		return false;
 	} else if (tokens[index].type == derivation_token_type::STRING) {
 		/* this is a preterminal rule */
-		unsigned int terminal;
-		if (!get_token(tokens[index].text, terminal, names)) {
-			free(root_transform);
+		array<unsigned int> terminals(4);
+		if (!read_string(tokens[index].text, terminals, names))
 			return false;
+		index++;
+
+		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
+		new_rule.type = rule_type::TERMINAL;
+		new_rule.t.terminals = terminals.data;
+		new_rule.t.length = terminals.length;
+		new_rule.t.inflected = nullptr;
+		new_rule.t.inflected_length = 0;
+
+		array<unsigned int> inflected(4);
+		if (index < tokens.length && tokens[index].type == derivation_token_type::SLASH) {
+			index++;
+			if (!expect_token(tokens, index, derivation_token_type::STRING, "inflected form string following slash"))
+				return false;
+			if (!read_string(tokens[index].text, inflected, names))
+				return false;
+			index++;
+
+			new_rule.t.inflected = inflected.data;
+			new_rule.t.inflected_length = inflected.length;
 		}
+
 		node = (syntax_node<Semantics>*) malloc(sizeof(syntax_node<Semantics>));
 		if (node == nullptr) {
 			free(root_transform);
 			return false;
-		} else if (!init(*node, sequence(&terminal, 1))) {
+		} else if (!init(*node, new_rule)) {
 			free(root_transform); free(node);
 			return false;
 		}
-		index++;
+
 		if (!expect_token(tokens, index, derivation_token_type::RPAREN, "right parenthesis of terminal node"))
 			return false;
 		index++;
@@ -1386,19 +1430,20 @@ bool derivation_interpret(unsigned int& root_nonterminal,
 
 		/* we finished reading all the child nodes */
 		rule<Semantics>& r = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
-		r.nonterminals = (unsigned int*) malloc(1);
-		r.transformations = (transformation<Semantics>*) malloc(1);
-		r.length = child_nodes.length;
-		if (r.nonterminals == nullptr || r.transformations == nullptr) {
+		r.type = rule_type::NONTERMINAL;
+		r.nt.nonterminals = (unsigned int*) malloc(1);
+		r.nt.transformations = (transformation<Semantics>*) malloc(1);
+		r.nt.length = child_nodes.length;
+		if (r.nt.nonterminals == nullptr || r.nt.transformations == nullptr) {
 			fprintf(stderr, "derivation_interpret ERROR: Out of memory.\n");
-			if (r.nonterminals != nullptr) free(r.nonterminals);
+			if (r.nt.nonterminals != nullptr) free(r.nt.nonterminals);
 			for (transformation<Semantics>& transform : child_transforms) free(transform);
 			for (syntax_node<Semantics>* node : child_nodes) { free(*node); if (node->reference_count == 0) free(node); }
 			free(root_transform);
 			return false;
 		}
-		swap(r.nonterminals, child_nonterminals.data);
-		swap(r.transformations, child_transforms.data);
+		swap(r.nt.nonterminals, child_nonterminals.data);
+		swap(r.nt.transformations, child_transforms.data);
 
 		syntax_node<Semantics>* new_node = (syntax_node<Semantics>*) malloc(sizeof(syntax_node<Semantics>));
 		if (new_node == nullptr) {

@@ -77,15 +77,15 @@ struct rule_prior
 	template<typename Semantics>
 	double probability(const rule<Semantics>& observation) const {
 		if (observation.is_terminal()) {
-			return terminal_prior.probability(sequence(observation.nonterminals, observation.length));
+			return terminal_prior.probability(sequence(observation.t.terminals, observation.t.length));
 		} else {
-			if (observation.length != 2)
+			if (observation.nt.length != 2)
 				return 0.0;
 			auto nonterminals = array_multiset<unsigned int>(2);
 			if (!get_nonterminals(nonterminals, observation)) exit(EXIT_FAILURE);
 			double score = nonterminal_prior.probability(nonterminals)
 				 / (array_length(Semantics::functions) * array_length(Semantics::functions));
-			return score * pow(max_nonterminal_probability, 2 - observation.length);
+			return score * pow(max_nonterminal_probability, 2 - observation.nt.length);
 		}
 	}
 
@@ -100,14 +100,14 @@ struct rule_prior
 	template<typename Semantics>
 	double log_probability(const rule<Semantics>& observation) const {
 		if (observation.is_terminal()) {
-			return terminal_prior.log_probability(sequence(observation.nonterminals, observation.length));
+			return terminal_prior.log_probability(sequence(observation.t.terminals, observation.t.length));
 		} else {
-			if (observation.length != 2)
+			if (observation.nt.length != 2)
 				return -std::numeric_limits<double>::infinity();
 			auto nonterminals = array_multiset<unsigned int>(2);
 			if (!get_nonterminals(nonterminals, observation)) exit(EXIT_FAILURE);
 			double score = nonterminal_prior.log_probability(nonterminals) - 2 * Semantics::log_function_count;
-			return score + max_nonterminal_log_probability * (2 - observation.length);
+			return score + max_nonterminal_log_probability * (2 - observation.nt.length);
 		}
 	}
 
@@ -150,8 +150,8 @@ private:
 		const rule<Semantics>& observation,
 		unsigned int count = 1)
 	{
-		for (unsigned int i = 0; i < observation.length; i++)
-			if (!nonterminals.add_unsorted(observation.nonterminals[i], count))
+		for (unsigned int i = 0; i < observation.nt.length; i++)
+			if (!nonterminals.add_unsorted(observation.nt.nonterminals[i], count))
 				return false;
 		return true;
 	}
@@ -270,7 +270,7 @@ struct terminal_prior
 
 	template<typename Semantics>
 	double probability(const rule<Semantics>& observation) const {
-		sequence seq(observation.nonterminals, observation.length);
+		sequence seq(observation.t.terminals, observation.t.length);
 		if (excluded.contains(seq)) return 0.0;
 		else return prior.probability(seq);
 	}
@@ -285,7 +285,7 @@ struct terminal_prior
 
 	template<typename Semantics>
 	double log_probability(const rule<Semantics>& observation) const {
-		sequence seq(observation.nonterminals, observation.length);
+		sequence seq(observation.t.terminals, observation.t.length);
 		if (excluded.contains(seq)) return -std::numeric_limits<double>::infinity();
 		else return prior.log_probability(seq);
 	}
@@ -358,9 +358,11 @@ bool sample(const terminal_prior<TerminalPrior>& prior, rule<Semantics>& output)
 		if (!prior.excluded.contains(tokens)) break;
 		free(tokens);
 	}
-	output.nonterminals = tokens.tokens;
-	output.transformations = nullptr;
-	output.length = tokens.length;
+	output.type = rule_type::TERMINAL;
+	output.t.terminals = tokens.tokens;
+	output.t.length = tokens.length;
+	output.t.inflected = nullptr;
+	output.t.inflected_length = 0;
 	return true;
 }
 
@@ -1093,8 +1095,8 @@ inline bool parse_number(const rule<Semantics>& observation,
 		const StringMapType& token_map)
 {
 	int integer;
-	if (!observation.is_terminal() || observation.length != 1
-	 || !parse_int(map_to_string(token_map, observation.nonterminals[0]), integer)
+	if (!observation.is_terminal() || observation.t.length != 1
+	 || !parse_int(map_to_string(token_map, observation.t.terminals[0]), integer)
 	 || !set_number(dst_logical_form, src_logical_form, integer))
 		return false;
 	return true;
@@ -1106,7 +1108,7 @@ inline bool parse_string(const rule<Semantics>& observation,
 		const StringMapType& token_map)
 {
 	return observation.is_terminal()
-		&& set_string(dst_logical_form, src_logical_form, {observation.nonterminals, observation.length});
+		&& set_string(dst_logical_form, src_logical_form, {observation.t.terminals, observation.t.length});
 }
 
 template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
@@ -1249,7 +1251,7 @@ inline weighted<sequence>* get_terminals(
 	for (unsigned int i = 0; i < distribution.observations.counts.size; i++) {
 		const rule<Semantics>& observation = distribution.observations.counts.keys[i];
 		if (!observation.is_terminal()) continue;
-		if (!init(weighted_terminals[length].object, {observation.nonterminals, observation.length})) {
+		if (!init(weighted_terminals[length].object, {observation.nt.nonterminals, observation.nt.length})) {
 			for (unsigned int j = 0; j < length; j++)
 				free(weighted_terminals[j]);
 			free(weighted_terminals);
@@ -1297,14 +1299,14 @@ bool add_unobserved_rule(
 	const typename Semantics::function& first, const typename Semantics::function& second)
 {
 #if !defined(NDEBUG)
-	if (new_rule.length != 2)
+	if (new_rule.nt.length != 2)
 		fprintf(stderr, "add_unobserved_rule WARNING: `new_rule` doesn't have length 2.\n");
-	if (new_rule.transformations[0].function_count != 1
-	 || new_rule.transformations[1].function_count != 1)
+	if (new_rule.nt.transformations[0].function_count != 1
+	 || new_rule.nt.transformations[1].function_count != 1)
 		fprintf(stderr, "add_unobserved_rule WARNING: A transformation in `new_rule` doesn't have 1 function.\n");
 #endif
-	new_rule.transformations[0].functions[0] = first;
-	new_rule.transformations[1].functions[0] = second;
+	new_rule.nt.transformations[0].functions[0] = first;
+	new_rule.nt.transformations[1].functions[0] = second;
 	return add_unobserved_rule(distribution, rules, new_rule);
 }
 
@@ -1358,15 +1360,16 @@ bool get_rules(
 				break;
 
 			rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
-			new_rule.length = 2;
-			new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
-			new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
-			new_rule.transformations[0].function_count = 1;
-			new_rule.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.transformations[0].function_count);
-			new_rule.transformations[1].function_count = 1;
-			new_rule.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.transformations[1].function_count);
-			new_rule.nonterminals[0] = pair.first;
-			new_rule.nonterminals[1] = pair.second;
+			new_rule.type = rule_type::NONTERMINAL;
+			new_rule.nt.length = 2;
+			new_rule.nt.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.nt.length);
+			new_rule.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.nt.length);
+			new_rule.nt.transformations[0].function_count = 1;
+			new_rule.nt.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.nt.transformations[0].function_count);
+			new_rule.nt.transformations[1].function_count = 1;
+			new_rule.nt.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.nt.transformations[1].function_count);
+			new_rule.nt.nonterminals[0] = pair.first;
+			new_rule.nt.nonterminals[1] = pair.second;
 
 			for (unsigned int i = 0; i < array_length(Semantics::transformations); i++) {
 				const core::pair<function, function>& transformation = Semantics::transformations[i];
@@ -1396,20 +1399,21 @@ bool get_rules(hdp_rule_distribution<rule_prior<NonterminalPrior, TerminalPrior>
 	while (iterator.has_next()) {
 		nonterminal_pair pair = iterator.next();
 		rule<Semantics>& new_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
-		new_rule.length = 2;
-		new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
-		new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
-		new_rule.transformations[0].function_count = 1;
-		new_rule.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.transformations[0].function_count);
-		new_rule.transformations[1].function_count = 1;
-		new_rule.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.transformations[1].function_count);
-		new_rule.nonterminals[0] = pair.first;
-		new_rule.nonterminals[1] = pair.second;
+		new_rule.type = rule_type::NONTERMINAL;
+		new_rule.nt.length = 2;
+		new_rule.nt.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.nt.length);
+		new_rule.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.nt.length);
+		new_rule.nt.transformations[0].function_count = 1;
+		new_rule.nt.transformations[0].functions = (function*) malloc(sizeof(function) * new_rule.nt.transformations[0].function_count);
+		new_rule.nt.transformations[1].function_count = 1;
+		new_rule.nt.transformations[1].functions = (function*) malloc(sizeof(function) * new_rule.nt.transformations[1].function_count);
+		new_rule.nt.nonterminals[0] = pair.first;
+		new_rule.nt.nonterminals[1] = pair.second;
 
 		for (unsigned int i = 0; i < array_length(Semantics::transformations); i++) {
 			const core::pair<function, function>& transformation = Semantics::transformations[i];
-			new_rule.transformations[0].functions[0] = transformation.key;
-			new_rule.transformations[1].functions[0] = transformation.value;
+			new_rule.nt.transformations[0].functions[0] = transformation.key;
+			new_rule.nt.transformations[1].functions[0] = transformation.value;
 
 			if (!rules.ensure_capacity(rules.length + 1)
 			 || !init(rules[(unsigned int) rules.length], new_rule))

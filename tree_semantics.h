@@ -1618,7 +1618,7 @@ inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const tree_semantics& logical_form, EmitRootFunction emit_root)
 {
-	return emit_root(words, logical_form);
+	return emit_root(words, {nullptr, 0}, logical_form);
 }
 
 template<typename PartOfSpeechType>
@@ -1720,51 +1720,52 @@ bool initialize_tree(
 	unsigned int k = sample_uniform(sentence.length - 1) + 1;
 
 	rule<tree_semantics>& branch = *((rule<tree_semantics>*) alloca(sizeof(rule<tree_semantics>)));
-	branch.length = 2;
-	branch.transformations = (transformation<tree_semantics>*) malloc(sizeof(transformation<tree_semantics>) * branch.length);
-	branch.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.length);
-	branch.transformations[0].function_count = 1;
-	branch.transformations[0].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.transformations[0].function_count);
-	branch.transformations[1].function_count = 1;
-	branch.transformations[1].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.transformations[1].function_count);
-	if (!random_transformation(logical_form, branch.transformations[0].functions[0], branch.transformations[1].functions[0])) {
+	branch.type = rule_type::NONTERMINAL;
+	branch.nt.length = 2;
+	branch.nt.transformations = (transformation<tree_semantics>*) malloc(sizeof(transformation<tree_semantics>) * branch.nt.length);
+	branch.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * branch.nt.length);
+	branch.nt.transformations[0].function_count = 1;
+	branch.nt.transformations[0].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.nt.transformations[0].function_count);
+	branch.nt.transformations[1].function_count = 1;
+	branch.nt.transformations[1].functions = (tree_semantics::function*) malloc(sizeof(tree_semantics::function) * branch.nt.transformations[1].function_count);
+	if (!random_transformation(logical_form, branch.nt.transformations[0].functions[0], branch.nt.transformations[1].functions[0])) {
 		free(tree); tree = NULL;
 		free(branch); return false;
 	}
 
 	if (k == 1) {
-		if (!sample_preterminal(G, {sentence.tokens, k}, branch.nonterminals[0])) {
+		if (!sample_preterminal(G, {sentence.tokens, k}, branch.nt.nonterminals[0])) {
 			free(tree); tree = NULL;
 			free(branch); return false;
 		}
 	} else {
-		if (!sample_nonterminal(G, branch.nonterminals[0])) {
+		if (!sample_nonterminal(G, branch.nt.nonterminals[0])) {
 			free(tree); tree = NULL;
 			free(branch); return false;
 		}
 	}
 
 	if (sentence.length - k == 1) {
-		if (!sample_preterminal(G, {sentence.tokens + k, sentence.length - k}, branch.nonterminals[1])) {
+		if (!sample_preterminal(G, {sentence.tokens + k, sentence.length - k}, branch.nt.nonterminals[1])) {
 			free(tree); tree = NULL;
 			free(branch); return false;
 		}
 	} else {
-		if (!sample_nonterminal(G, branch.nonterminals[1])) {
+		if (!sample_nonterminal(G, branch.nt.nonterminals[1])) {
 			free(tree); tree = NULL;
 			free(branch); return false;
 		}
 	}
 
-	const tree_semantics* left = apply(branch.transformations[0].functions[0], logical_form);
-	const tree_semantics* right = apply(branch.transformations[1].functions[0], logical_form);
+	const tree_semantics* left = apply(branch.nt.transformations[0].functions[0], logical_form);
+	const tree_semantics* right = apply(branch.nt.transformations[1].functions[0], logical_form);
 	if (!init(*tree, branch)) exit(EXIT_FAILURE);
-	if (!initialize_tree(G, tree->children[0], { sentence.tokens, k }, *left, branch.nonterminals[0])) {
+	if (!initialize_tree(G, tree->children[0], { sentence.tokens, k }, *left, branch.nt.nonterminals[0])) {
 		free(*tree); free(tree);
 		tree = NULL; free(branch);
 		return false;
 	} else if (!initialize_tree(G, tree->children[1],
-			{ sentence.tokens + k, sentence.length - k }, *right, branch.nonterminals[1]))
+			{ sentence.tokens + k, sentence.length - k }, *right, branch.nt.nonterminals[1]))
 	{
 		free(*tree); free(tree);
 		tree = NULL; free(branch);

@@ -503,15 +503,19 @@ template<parse_mode Mode, typename Semantics>
 inline bool init(rule_state<Mode, Semantics>& state,
 	unsigned int nonterminal, const rule<Semantics>& r, span position)
 {
+#if !defined(NDEBUG)
+	if (r.is_terminal())
+		fprintf(stderr, "init WARNING: A terminal rule was specified when initializing rule_state.\n");
+#endif
 	state.nonterminal = nonterminal;
 	if (Mode != MODE_GENERATE) {
-		state.positions = (unsigned int*) malloc(sizeof(unsigned int) * (r.length + 1));
+		state.positions = (unsigned int*) malloc(sizeof(unsigned int) * (r.nt.length + 1));
 		if (state.positions == NULL) {
 			fprintf(stderr, "init ERROR: Unable to initialize position array in new rule_state.\n");
 			return false;
 		}
 		state.positions[0] = position.start;
-		state.positions[r.length] = position.end;
+		state.positions[r.nt.length] = position.end;
 	}
 	if (!init(state.syntax, r)) {
 		if (Mode != MODE_GENERATE) free(state.positions);
@@ -556,18 +560,22 @@ inline bool init(
 	const syntax_state<Mode, Semantics>& syntax)
 {
 	const rule<Semantics>& rule = src.syntax.get_rule();
+#if !defined(NDEBUG)
+	if (rule.is_terminal())
+		fprintf(stderr, "init WARNING: A terminal rule was specified when initializing rule_state.\n");
+#endif
 
 	state.nonterminal = src.nonterminal;
 	state.log_probability = src.log_probability;
 	if (Mode != MODE_GENERATE) {
-		state.positions = (unsigned int*) malloc(sizeof(unsigned int) * (rule.length + 1));
+		state.positions = (unsigned int*) malloc(sizeof(unsigned int) * (rule.nt.length + 1));
 		if (state.positions == NULL) {
 			fprintf(stderr, "init ERROR: Unable to initialize position array in new rule_state.\n");
 			return false;
 		}
 		for (unsigned int i = 0; i < src.rule_position + 2; i++)
 			state.positions[i] = src.positions[i];
-		state.positions[rule.length] = src.positions[rule.length];
+		state.positions[rule.nt.length] = src.positions[rule.nt.length];
 	}
 
 	if (!init(state.syntax, src.syntax)) {
@@ -651,10 +659,10 @@ inline bool init(nonterminal_state<Mode, Semantics>& state,
 
 	if (Mode != MODE_GENERATE) {
 		state.positions = (unsigned int*) malloc(
-			sizeof(unsigned int) * (rule.is_terminal() ? 2 : (rule.length + 1)));
+			sizeof(unsigned int) * (rule.is_terminal() ? 2 : (rule.nt.length + 1)));
 		if (state.positions == NULL) return false;
 		memcpy(state.positions, positions,
-			sizeof(unsigned int) * (rule.is_terminal() ? 2 : (rule.length + 1)));
+			sizeof(unsigned int) * (rule.is_terminal() ? 2 : (rule.nt.length + 1)));
 	}
 	state.log_probability = priority;
 	if (!init(state.syntax, syntax)) {
@@ -711,7 +719,7 @@ inline bool init(
 	state.posterior_length = posterior_length;
 	state.posterior = posterior;
 
-	unsigned int length = rule.is_terminal() ? 2 : (rule.length + 1);
+	unsigned int length = rule.is_terminal() ? 2 : (rule.nt.length + 1);
 	if (Mode != MODE_GENERATE) {
 		state.positions = (unsigned int*) malloc(sizeof(unsigned int) * length);
 		if (state.positions == NULL) {
@@ -1849,7 +1857,7 @@ inline void initialize_message(
 	double*& right_priors, double additive_prior,
 	double right_prior, const bool* separable)
 {
-	unsigned int next_nonterminal = rule.nonterminals[rule_position];
+	unsigned int next_nonterminal = rule.nt.nonterminals[rule_position];
 
 	message = (double*) malloc(sizeof(double) * (end - start + 1));
 	additive_priors = (double*) malloc(sizeof(double) * (end - start + 1));
@@ -1918,7 +1926,7 @@ inline void update_message(const rule<Semantics>& rule,
 	double* next_additive_priors, double* next_right_priors,
 	bool is_separable)
 {
-	unsigned int next_nonterminal = rule.nonterminals[rule_position];
+	unsigned int next_nonterminal = rule.nt.nonterminals[rule_position];
 	for (unsigned int k = 0; k < end - start + 1; k++)
 		update_message_k(parse_chart, next_logical_form, next_nonterminal, start, end, message, additive_priors,
 				right_priors, next_message, next_additive_priors, next_right_priors, k, is_separable);
@@ -1931,23 +1939,27 @@ void right_probability(const rule<Semantics>& r,
 	chart<MODE_PARSE, Semantics>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
-	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
-	is_separable(r.transformations, r.length, separable);
+#if !defined(NDEBUG)
+	if (r.is_terminal())
+		fprintf(stderr, "right_probability WARNING: `r` is a terminal rule.\n");
+#endif
+	bool* separable = (bool*) alloca(sizeof(bool) * r.nt.length);
+	is_separable(r.nt.transformations, r.nt.length, separable);
 
 	Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	if (!separable[0]) {
 		initialize_any(next_logical_form);
-	} else if (!apply(r.transformations[0], logical_form_set, next_logical_form)) {
+	} else if (!apply(r.nt.transformations[0], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		return;
 	}
 
 	unsigned int start = positions[0];
-	unsigned int end = positions[r.length];
-	if (r.length == 1) {
+	unsigned int end = positions[r.nt.length];
+	if (r.nt.length == 1) {
 		/* this is the only nonterminal in this rule */
 		double inner_right, inner_prior, initial_prior;
-		inner_probability(parse_chart, r.nonterminals[0],
+		inner_probability(parse_chart, r.nt.nonterminals[0],
 				next_logical_form, {start, end}, inner_right, inner_prior, initial_prior);
 		free(next_logical_form);
 		if (is_negative_inf(inner_prior)) { right = -std::numeric_limits<double>::infinity(); right_prior = right; return; }
@@ -1965,11 +1977,11 @@ void right_probability(const rule<Semantics>& r,
 	double* next_message = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_additive_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
-	for (unsigned int i = 1; i + 1 < r.length; i++) {
+	for (unsigned int i = 1; i + 1 < r.nt.length; i++) {
 		free(next_logical_form);
 		if (!separable[i]) {
 			initialize_any(next_logical_form);
-		} else if (!apply(r.transformations[i], logical_form_set, next_logical_form)) {
+		} else if (!apply(r.nt.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
 		update_message(r, parse_chart, next_logical_form, i, start, end, message, additive_priors,
@@ -1978,12 +1990,12 @@ void right_probability(const rule<Semantics>& r,
 	}
 
 	free(next_logical_form);
-	if (!separable[r.length - 1]) {
+	if (!separable[r.nt.length - 1]) {
 		initialize_any(next_logical_form);
-	} else if (!apply(r.transformations[r.length - 1], logical_form_set, next_logical_form)) {
+	} else if (!apply(r.nt.transformations[r.nt.length - 1], logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity(); return;
 	}
-	update_message_k(parse_chart, next_logical_form, r.nonterminals[r.length - 1], start, end, message,
+	update_message_k(parse_chart, next_logical_form, r.nt.nonterminals[r.nt.length - 1], start, end, message,
 			additive_priors, right_priors, next_message, next_additive_priors, next_right_priors, end - start, separable);
 	free(next_logical_form);
 
@@ -2048,13 +2060,17 @@ void right_probability(
 {
 	unsigned int rule_position = rule.rule_position + 1;
 	const ::rule<Semantics>& r = rule.syntax.get_rule();
-	bool* separable = (bool*) alloca(sizeof(bool) * r.length);
-	is_separable(r.transformations, r.length, separable);
+#if !defined(NDEBUG)
+	if (r.is_terminal())
+		fprintf(stderr, "right_probability WARNING: `r` is a terminal rule.\n");
+#endif
+	bool* separable = (bool*) alloca(sizeof(bool) * r.nt.length);
+	is_separable(r.nt.transformations, r.nt.length, separable);
 
 	Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	if (IgnoreNext || !separable[rule.rule_position]) {
 		initialize_any(next_logical_form);
-	} else if (!apply(r.transformations[rule.rule_position], rule.logical_form_set, next_logical_form)) {
+	} else if (!apply(r.nt.transformations[rule.rule_position], rule.logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		return;
 	}
@@ -2062,17 +2078,17 @@ void right_probability(
 	double inner_right, inner_prior, initial_prior, additive_prior = 0.0;
 	if (IgnoreNext) {
 		right_prior = old_prior;
-		if (rule_position == r.length) {
+		if (rule_position == r.nt.length) {
 			right = right_prior;
 			return;
 		}
 	} else {
-		inner_probability(parse_chart, r.nonterminals[rule.rule_position], next_logical_form,
+		inner_probability(parse_chart, r.nt.nonterminals[rule.rule_position], next_logical_form,
 				{rule.positions[rule.rule_position], rule.positions[rule_position]}, inner_right, inner_prior, initial_prior);
 		if (is_negative_inf(inner_prior)) { right = -std::numeric_limits<double>::infinity(); right_prior = right; return; }
 		additive_prior = separable[rule.rule_position] * (inner_prior - initial_prior);
 		right_prior = min(old_prior, !separable[rule.rule_position] * inner_prior);
-		if (rule_position == r.length) {
+		if (rule_position == r.nt.length) {
 			free(next_logical_form);
 			right = right_prior + additive_prior;
 			return;
@@ -2081,16 +2097,16 @@ void right_probability(
 
 
 	unsigned int start = rule.positions[rule_position];
-	unsigned int end = rule.positions[r.length];
-	if (rule_position + 1 == r.length) {
+	unsigned int end = rule.positions[r.nt.length];
+	if (rule_position + 1 == r.nt.length) {
 		/* this is the last nonterminal in this rule */
 		free(next_logical_form);
 		if (!separable[rule_position]) {
 			initialize_any(next_logical_form);
-		} else if (!apply(r.transformations[rule_position], rule.logical_form_set, next_logical_form)) {
+		} else if (!apply(r.nt.transformations[rule_position], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity(); return;
 		}
-		inner_probability(parse_chart, r.nonterminals[rule_position],
+		inner_probability(parse_chart, r.nt.nonterminals[rule_position],
 				next_logical_form, {start, end}, inner_right, inner_prior, initial_prior);
 		free(next_logical_form);
 		if (is_negative_inf(inner_prior)) { right = -std::numeric_limits<double>::infinity(); right_prior = right; return; }
@@ -2110,11 +2126,11 @@ void right_probability(
 	double* next_message = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_additive_priors = (double*) malloc(sizeof(double) * (end - start + 1));
 	double* next_right_priors = (double*) malloc(sizeof(double) * (end - start + 1));
-	for (unsigned int i = rule_position + 1; i + 1 < r.length; i++) {
+	for (unsigned int i = rule_position + 1; i + 1 < r.nt.length; i++) {
 		free(next_logical_form);
 		if (!separable[i]) {
 			initialize_any(next_logical_form);
-		} else if (!apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
+		} else if (!apply(r.nt.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			free(message); free(next_message);
 			free(additive_priors); free(next_additive_priors);
@@ -2127,16 +2143,16 @@ void right_probability(
 	}
 
 	free(next_logical_form);
-	if (!separable[r.length - 1]) {
+	if (!separable[r.nt.length - 1]) {
 		initialize_any(next_logical_form);
-	} else if (!apply(r.transformations[r.length - 1], rule.logical_form_set, next_logical_form)) {
+	} else if (!apply(r.nt.transformations[r.nt.length - 1], rule.logical_form_set, next_logical_form)) {
 		right = -std::numeric_limits<double>::infinity();
 		free(message); free(next_message);
 		free(additive_priors); free(next_additive_priors);
 		free(right_priors); free(next_right_priors);
 		return;
 	}
-	update_message_k(parse_chart, next_logical_form, r.nonterminals[r.length - 1], start, end, message,
+	update_message_k(parse_chart, next_logical_form, r.nt.nonterminals[r.nt.length - 1], start, end, message,
 			additive_priors, right_priors, next_message, next_additive_priors, next_right_priors, end - start, separable);
 	free(next_logical_form);
 
@@ -2265,7 +2281,7 @@ inline double compute_priority(
 	chart<MODE_SAMPLE, Semantics>& parse_chart,
 	nonterminal<Semantics, Distribution>& N)
 {
-	return (double) state.positions[0] - state.positions[state.syntax.r.length]
+	return (double) state.positions[0] - state.positions[state.syntax.r.nt.length]
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
@@ -2275,7 +2291,7 @@ inline double compute_priority(
 	const chart<MODE_SAMPLE, Semantics>& parse_chart,
 	const nonterminal<Semantics, Distribution>& N)
 {
-	return (double) state.positions[0] - state.positions[state.syntax.r.is_terminal() ? 1 : state.syntax.r.length]
+	return (double) state.positions[0] - state.positions[state.syntax.r.is_terminal() ? 1 : state.syntax.r.nt.length]
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
@@ -2319,7 +2335,7 @@ inline double compute_priority(
 {
 	Semantics& logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	const rule<Semantics>& r = state.syntax.get_rule();
-	if (!apply(r.transformations[state.rule_position], state.logical_form_set, logical_form))
+	if (!apply(r.nt.transformations[state.rule_position], state.logical_form_set, logical_form))
 		return 0.0;
 
 	span positions;
@@ -2333,7 +2349,7 @@ inline double compute_priority(
 	double old_prior = (Mode == MODE_PARSE) ? min(log_probability<false>(state.logical_form_set), state.cell->prior_probability) : 0.0;
 
 	double inner, inner_prior, initial_prior;
-	inner_probability(parse_chart, r.nonterminals[state.rule_position],
+	inner_probability(parse_chart, r.nt.nonterminals[state.rule_position],
 			logical_form, positions, inner, inner_prior, initial_prior);
 	free(logical_form);
 
@@ -2420,12 +2436,12 @@ inline bool push_rule_states(
 {
 	auto& N = get_nonterminal<Mode>(G, nonterminal);
 	unsigned int end = position.start + 1;
-	unsigned int last_end = (Mode == MODE_GENERATE ? 1 : (position.end - r.length + 1));
-	if (r.length == 1) end = last_end;
+	unsigned int last_end = (Mode == MODE_GENERATE ? 1 : (position.end - r.nt.length + 1));
+	if (r.nt.length == 1) end = last_end;
 	for (; end < last_end + 1; end++)
 	{
 		/* check if the next nonterminal is feasible at this position */
-		unsigned int next_nonterminal = r.nonterminals[0];
+		unsigned int next_nonterminal = r.nt.nonterminals[0];
 		if (Mode != MODE_GENERATE && !get_nonterminal<Mode>(G, next_nonterminal).rule_distribution.has_nonterminal_rules()) {
 			if (end > sentence.end_terminal[position.start])
 				break;
@@ -2486,7 +2502,7 @@ bool push_invert_state(
 	} else if (
 		Mode != MODE_COMPUTE_BOUNDS
 	 && !invert(inverse->inverse, inverse->inverse_count,
-		 rule.syntax.get_rule().transformations[rule.rule_position],
+		 rule.syntax.get_rule().nt.transformations[rule.rule_position],
 		 rule.logical_form_set, logical_form_set))
 	{
 		/* the inverse is empty, so return quietly */
@@ -2553,7 +2569,7 @@ inline bool complete_nonterminal(
 {
 	const rule<Semantics>& rule = syntax.get_rule();
 	unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
-	unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[rule.is_terminal() ? 1 : rule.length];
+	unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[rule.is_terminal() ? 1 : rule.nt.length];
 
 
 /*if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("N_PREDICATE") && start == 3 && end == 4) {
@@ -2683,7 +2699,7 @@ inline bool push_nonterminal_iterator(
 					if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
 						prior = min(log_probability<false>(logical_form_set), cell.prior_probability);
 					unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
-					unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.length];
+					unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.nt.length];
 					if (!r.is_terminal())
 						return push_rule_states(queue, G, parse_chart, nonterminal, r, logical_form_set,
 								cell, sentence, {start, end}, inner_log_probability - prior + inside);
@@ -2745,13 +2761,15 @@ inline bool push_nonterminal_iterator(
 			return true;
 		};
 
-	auto emit_root = [&](const sequence& terminal, const Semantics& logical_form_set)
+	auto emit_root = [&](const sequence& terminal, const sequence& inflected, const Semantics& logical_form_set)
 		{
 			rule<Semantics>& terminal_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
 			syntax_state<Mode, Semantics>& new_syntax = *((syntax_state<Mode, Semantics>*) alloca(sizeof(syntax_state<Mode, Semantics>)));
-			terminal_rule.transformations = r.transformations;
-			terminal_rule.nonterminals = terminal.tokens;
-			terminal_rule.length = terminal.length;
+			terminal_rule.type = rule_type::TERMINAL;
+			terminal_rule.t.terminals = terminal.tokens;
+			terminal_rule.t.length = terminal.length;
+			terminal_rule.t.inflected = inflected.tokens;
+			terminal_rule.t.inflected_length = inflected.length;
 			if (!init(new_syntax, terminal_rule)
 			 || !push_iterator(terminal_rule, new_syntax, logical_form_set)) {
 				free(new_syntax);
@@ -2767,8 +2785,8 @@ inline bool push_nonterminal_iterator(
 			fprintf(stderr, "push_nonterminal_iterator WARNING: `Mode` shouldn't be GENERATE here.\n");
 #endif
 		if (positions[0] == 0)
-			return morphology_parse<true>(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
-		else return morphology_parse<false>(morphology_parser, {r.nonterminals, r.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
+			return morphology_parse<true>(morphology_parser, {r.t.terminals, r.t.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
+		else return morphology_parse<false>(morphology_parser, {r.t.terminals, r.t.length}, N.rule_distribution.get_part_of_speech(), logical_form_set, emit_root);
 	} else {
 		return push_iterator(r, syntax, logical_form_set);
 	}
@@ -2848,18 +2866,18 @@ bool complete_invert_state(
 {
 	unsigned int rule_position = completed_rule.rule_position + 1;
 	const rule<Semantics>& r = completed_rule.syntax.get_rule();
-	if (rule_position < r.length) {
+	if (rule_position < r.nt.length) {
 		/* the rule has more right-hand nonterminals */
 
 		/* consider all possible end positions for the next nonterminal */
 		unsigned int next_end = (Mode == MODE_GENERATE ? 1 : (completed_rule.positions[rule_position] + 1));
-		unsigned int last_end = (Mode == MODE_GENERATE ? 1 : (completed_rule.positions[r.length] - r.length + rule_position + 1));
-		if (rule_position == completed_rule.syntax.get_rule().length - 1)
+		unsigned int last_end = (Mode == MODE_GENERATE ? 1 : (completed_rule.positions[r.nt.length] - r.nt.length + rule_position + 1));
+		if (rule_position == completed_rule.syntax.get_rule().nt.length - 1)
 			/* this is the last nonterminal, so there's only one possible end position */
 			next_end = last_end;
 		for (; next_end < last_end + 1; next_end++) {
 			/* check if the next nonterminal is feasible at this position */
-			unsigned int next_nonterminal = r.nonterminals[rule_position];
+			unsigned int next_nonterminal = r.nt.nonterminals[rule_position];
 			if (Mode != MODE_GENERATE && !get_nonterminal<Mode>(G, next_nonterminal).rule_distribution.has_nonterminal_rules()) {
 				if (next_end > sentence.end_terminal[completed_rule.positions[rule_position]])
 					break;
@@ -2973,9 +2991,9 @@ bool check_invariants(
 {
 	/* check the prior probability invariants */
 	bool valid = true;
-	const transformation<Semantics>& transformation = rule.syntax.get_rule().transformations[rule.rule_position];
-	bool* separable = (bool*) alloca(sizeof(bool) * rule.syntax.get_rule().length);
-	is_separable(rule.syntax.get_rule().transformations, rule.syntax.get_rule().length, separable);
+	const transformation<Semantics>& transformation = rule.syntax.get_rule().nt.transformations[rule.rule_position];
+	bool* separable = (bool*) alloca(sizeof(bool) * rule.syntax.get_rule().nt.length);
+	is_separable(rule.syntax.get_rule().nt.transformations, rule.syntax.get_rule().nt.length, separable);
 	if (separable[rule.rule_position]) {
 		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!apply(transformation, rule.logical_form_set, transformed)) {
@@ -3152,12 +3170,16 @@ bool expand_nonterminal(
 
 	for (const rule<Semantics>& r : rules)
 	{
-		if (Mode != MODE_GENERATE && position.end - position.start < r.length)
+#if !defined(NDEBUG)
+		if (r.is_terminal())
+			fprintf(stderr, "expand_nonterminal WARNING: `r` is a terminal rule.\n");
+#endif
+		if (Mode != MODE_GENERATE && position.end - position.start < r.nt.length)
 			continue;
 		if (USE_NONTERMINAL_PREITERATOR) {
-			unsigned int* positions = (unsigned int*) alloca(sizeof(unsigned int) * (r.length + 1));
+			unsigned int* positions = (unsigned int*) alloca(sizeof(unsigned int) * (r.nt.length + 1));
 			positions[0] = position.start;
-			positions[r.length] = position.end;
+			positions[r.nt.length] = position.end;
 			push_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser,
 					nonterminal, cell, syntax_state<Mode, Semantics>(r), logical_form_set, positions, 0.0);
 		} else {
@@ -3252,7 +3274,7 @@ inline bool expand_nonterminal(
 	/* go ahead and expand this nonterminal at this position */
 	/* TODO: even in parsing mode, we're assuming here that
 	   whether or not a nonterminal is a preterminal is fixed */
-	unsigned int next_nonterminal = r.nonterminals[state.rule_position];
+	unsigned int next_nonterminal = r.nt.nonterminals[state.rule_position];
 	const auto& next = get_nonterminal<Mode>(G, next_nonterminal);
 	if (next.rule_distribution.has_terminal_rules()) {
 		if (Mode == MODE_GENERATE) {
@@ -3296,16 +3318,24 @@ bool process_rule_state(
 		position.end = state.positions[state.rule_position + 1];
 	}
 
+const rule<Semantics>& r = state.syntax.get_rule();
+if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("NOMINAL_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("N") && position.start == 0 && position.end == 1)
+fprintf(stderr, "DEBUG: BREAKPOINT\n");
+if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("VP_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("V") && position.start == 1 && position.end == 2)
+fprintf(stderr, "DEBUG: BREAKPOINT\n");
+if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("NOMINAL_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("N") && position.start == 2 && position.end == 3)
+fprintf(stderr, "DEBUG: BREAKPOINT\n");
+
 	/* apply the semantic transformation paired with the next nonterminal */
 	Semantics& expanded_logical_forms = *((Semantics*) alloca(sizeof(Semantics)));
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
-	 && !apply(state.syntax.get_rule().transformations[state.rule_position],
+	 && !apply(state.syntax.get_rule().nt.transformations[state.rule_position],
 		 state.logical_form_set, expanded_logical_forms))
 	{
 		return false;
 	}
 
-	unsigned int next_nonterminal = state.syntax.get_rule().nonterminals[state.rule_position];
+	unsigned int next_nonterminal = state.syntax.get_rule().nt.nonterminals[state.rule_position];
 	cell_list<Mode, Semantics>& cells = parse_chart.get_cells(next_nonterminal, position);
 	if (Mode != MODE_GENERATE && position.length() == 1 && !sentence.tokens[position.start]->is_terminal()) {
 		/* the next token is a subtree */
@@ -3415,7 +3445,7 @@ bool process_nonterminal_iterator(
 			right = old_prior; prior = old_prior;
 		}
 		unsigned int start = (Mode == MODE_GENERATE) ? 0 : iterator.positions[0];
-		unsigned int end = (Mode == MODE_GENERATE) ? 0 : iterator.positions[rule.is_terminal() ? 1 : rule.length];
+		unsigned int end = (Mode == MODE_GENERATE) ? 0 : iterator.positions[rule.is_terminal() ? 1 : rule.nt.length];
 		if (!rule.is_terminal())
 			return push_rule_states(queue, G, parse_chart, iterator.nonterminal, rule,
 					logical_form, *iterator.cell, sentence, {start, end}, inner_probability - right);
@@ -3466,14 +3496,14 @@ bool sample(
 		}
 
 		/* recursively sample the descendant nodes */
-		for (unsigned int i = 0; i < nonterminal.syntax.r.length; i++) {
+		for (unsigned int i = 0; i < nonterminal.syntax.r.nt.length; i++) {
 			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
-			if (!apply(nonterminal.syntax.r.transformations[i], logical_form, transformed))
+			if (!apply(nonterminal.syntax.r.nt.transformations[i], logical_form, transformed))
 				return false;
 
 			unsigned int start = nonterminal.positions[i];
 			unsigned int end = nonterminal.positions[i + 1];
-			unsigned int next_nonterminal = nonterminal.syntax.r.nonterminals[i];
+			unsigned int next_nonterminal = nonterminal.syntax.r.nt.nonterminals[i];
 			if (end - start == 1 && !sentence.tokens[start]->is_terminal()) {
 				syntax->children[i] = NULL;
 				continue;
@@ -3826,20 +3856,20 @@ bool sample_chart(unsigned int nonterminal_id,
 	if (posterior == NULL) return false;
 
 	if (syntax.is_terminal()) {
-		end = start + syntax.right.length;
+		end = start + syntax.right.t.length;
 	} else {
 		unsigned int k = start;
-		for (unsigned int i = 0; i < syntax.right.length; i++) {
+		for (unsigned int i = 0; i < syntax.right.nt.length; i++) {
 			if (syntax.children[i] == NULL) {
 				end = k + 1;
 				continue;
 			}
 
 			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
-			if (!apply(syntax.right.transformations[i], logical_form, transformed))
+			if (!apply(syntax.right.nt.transformations[i], logical_form, transformed))
 				return false;
 
-			if (!sample_chart(syntax.right.nonterminals[i],
+			if (!sample_chart(syntax.right.nt.nonterminals[i],
 				*syntax.children[i], G, parse_chart, transformed, k, end))
 			{
 				free(transformed);

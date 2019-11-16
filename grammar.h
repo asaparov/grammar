@@ -224,36 +224,346 @@ inline bool invert(
 	return true;
 }
 
-/* Represents a production rule in the semantic grammar. */
+enum class rule_type : uint_fast8_t {
+	EMPTY = 0,
+	NONTERMINAL,
+	TERMINAL
+};
+
+template<typename Stream>
+inline bool read(rule_type& type, Stream& in) {
+	uint8_t v;
+	if (!read(v, in)) return false;
+	type = (rule_type) v;
+	return true;
+}
+
+template<typename Stream>
+inline bool write(const rule_type& type, Stream& out) {
+	return write((uint8_t) type, out);
+}
+
 template<typename Semantics>
-struct rule {
+struct nonterminal_rule {
 	unsigned int* nonterminals;
 	transformation<Semantics>* transformations;
 	unsigned int length;
 
-	rule(const rule<Semantics>& src) : length(src.length) {
-		if (!initialize(src, src.length))
+	static inline void move(const nonterminal_rule<Semantics>& src, nonterminal_rule<Semantics>& dst) {
+		dst.nonterminals = src.nonterminals;
+		dst.transformations = src.transformations;
+		dst.length = src.length;
+	}
+
+	static inline unsigned int hash(const nonterminal_rule<Semantics>& rule) {
+		unsigned int hash = default_hash(rule.nonterminals, rule.length);
+		for (unsigned int i = 0; i < rule.length; i++)
+			hash ^= hasher<transformation<Semantics>>::hash(rule.transformations[i]);
+		return hash;
+	}
+
+	static inline void free(nonterminal_rule<Semantics>& rule) {
+		core::free(rule.nonterminals);
+		for (unsigned int i = 0; i < rule.length; i++)
+			core::free(rule.transformations[i]);
+		core::free(rule.transformations);
+	}
+};
+
+template<typename Semantics>
+inline bool init(nonterminal_rule<Semantics>& rule, const nonterminal_rule<Semantics>& src) {
+	rule.length = src.length;
+	rule.nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * src.length));
+	if (rule.nonterminals == nullptr) {
+		fprintf(stderr, "init ERROR: Insufficient memory for `nonterminal_rule.nonterminals`.\n");
+		return false;
+	}
+
+	for (unsigned int i = 0; i < src.length; i++)
+		rule.nonterminals[i] = src.nonterminals[i];
+	rule.transformations = (transformation<Semantics>*) malloc(
+			max((size_t) 1, sizeof(transformation<Semantics>) * src.length));
+	if (rule.transformations == nullptr) {
+		fprintf(stderr, "init ERROR: Insufficient memory for `nonterminal_rule.transformations`.\n");
+		core::free(rule.nonterminals); return false;
+	}
+	for (unsigned int i = 0; i < src.length; i++) {
+		if (!init(rule.transformations[i], src.transformations[i])) {
+			fprintf(stderr, "init ERROR: Insufficient memory for `nonterminal_rule.transformations[%u]`.\n", i);
+			for (unsigned int j = 0; j < i; j++) core::free(rule.transformations[j]);
+			core::free(rule.transformations); core::free(rule.nonterminals);
+			return false;
+		}
+	}
+	return true;
+}
+
+template<typename Semantics>
+inline bool operator == (const nonterminal_rule<Semantics>& first, const nonterminal_rule<Semantics>& second) {
+	if (first.nonterminals == nullptr || first.length != second.length)
+		return false;
+
+	/* compare nonterminal list */
+	for (unsigned int i = 0; i < first.length; i++)
+		if (first.nonterminals[i] != second.nonterminals[i]) return false;
+
+	/* compare transformation functions */
+	for (unsigned int i = 0; i < first.length; i++)
+		if (first.transformations[i] != second.transformations[i]) return false;
+	return true;
+}
+
+template<typename Semantics>
+inline bool operator < (const nonterminal_rule<Semantics>& first, const nonterminal_rule<Semantics>& second) {
+	if (first.length < second.length) return true;
+	else if (first.length > second.length) return false;
+
+	/* compare the nonterminal list */
+	for (unsigned int i = 0; i < first.length; i++) {
+		if (first.nonterminals[i] < second.nonterminals[i]) return true;
+		else if (first.nonterminals[i] > second.nonterminals[i]) return false;
+	}
+
+	/* compare the transformation functions */
+	for (unsigned int i = 0; i < first.length; i++) {
+		if (first.transformations[i] < second.transformations[i]) return true;
+		else if (second.transformations[i] < first.transformations[i]) return false;
+	}
+	return false;
+}
+
+template<typename Semantics, typename Stream, typename Printer>
+inline bool print(const nonterminal_rule<Semantics>& r, Stream& out, Printer& printer) {
+	if (!print('(', out)) return false;
+	for (unsigned int i = 0; i < r.length; i++) {
+		if (i > 0 && !print(' ', out)) return false;
+		if (!print(r.nonterminals[i], out, printer) || !print(':', out) || !print(r.transformations[i], out))
+			return false;
+	}
+	return print(')', out);
+}
+
+template<typename Semantics, typename Stream>
+inline bool read(nonterminal_rule<Semantics>& r, Stream& in, hash_map<string, unsigned int>& token_map) {
+	if (!read(r.length, in))
+		return false;
+	r.nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * r.length));
+	if (r.nonterminals == nullptr) {
+		fprintf(stderr, "read ERROR: Insufficient memory for `nonterminal_rule.nonterminals`.\n");
+		return false;
+	} if (!read(r.nonterminals, in, r.length)) {
+		core::free(r.nonterminals);
+		return false;
+	}
+
+	r.transformations = (transformation<Semantics>*) malloc(
+			max((size_t) 1, sizeof(transformation<Semantics>) * r.length));
+	if (r.transformations == nullptr) {
+		fprintf(stderr, "read ERROR: Insufficient memory for `nonterminal_rule.transformations`.\n");
+		core::free(r.nonterminals); return false;
+	} if (!read(r.transformations, in, r.length)) {
+		core::free(r.nonterminals); core::free(r.transformations);
+		return false;
+	}
+	return true;
+}
+
+template<typename Semantics, typename Stream>
+inline bool write(const nonterminal_rule<Semantics>& r, Stream& out, const string** token_map) {
+	return write(r.length, out)
+		&& write(r.nonterminals, out, r.length)
+		&& write(r.transformations, out, r.length);
+}
+
+struct terminal_rule {
+	unsigned int* terminals;
+	unsigned int length;
+	unsigned int* inflected;
+	unsigned int inflected_length;
+
+	static inline unsigned int hash(const terminal_rule& rule) {
+		unsigned int hash = default_hash(rule.terminals, rule.length);
+		if (rule.inflected != nullptr)
+			hash ^= default_hash(rule.inflected, rule.inflected_length);
+		return hash;
+	}
+
+	static inline void move(const terminal_rule& src, terminal_rule& dst) {
+		dst.terminals = src.terminals;
+		dst.length = src.length;
+		dst.inflected = src.inflected;
+		dst.inflected_length = src.inflected_length;
+	}
+
+	static inline void free(terminal_rule& rule) {
+		core::free(rule.terminals);
+		if (rule.inflected != nullptr)
+			core::free(rule.inflected);
+	}
+};
+
+inline bool init(terminal_rule& rule, const terminal_rule& src) {
+	rule.length = src.length;
+	rule.inflected_length = src.inflected_length;
+	rule.terminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * src.length));
+	if (rule.terminals == nullptr) {
+		fprintf(stderr, "init ERROR: Insufficient memory for `terminal_rule.terminals`.\n");
+		return false;
+	}
+
+	for (unsigned int i = 0; i < src.length; i++)
+		rule.terminals[i] = src.terminals[i];
+	if (src.inflected == nullptr) {
+		rule.inflected = nullptr;
+	} else {
+		rule.inflected = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * src.inflected_length));
+		if (rule.inflected == nullptr) {
+			fprintf(stderr, "init ERROR: Insufficient memory for `terminal_rule.inflected`.\n");
+			free(rule.terminals); return false;
+		}
+		for (unsigned int i = 0; i < src.inflected_length; i++)
+			rule.inflected[i] = src.inflected[i];
+	}
+	return true;
+}
+
+inline bool init(terminal_rule& rule, const sequence& terminal) {
+	rule.length = terminal.length;
+	rule.terminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * terminal.length));
+	if (rule.terminals == NULL) {
+		fprintf(stderr, "init ERROR: Insufficient memory for `terminal_rule.terminals`.\n");
+		return false;
+	}
+	for (unsigned int i = 0; i < terminal.length; i++)
+		rule.terminals[i] = terminal.tokens[i];
+	rule.inflected = nullptr;
+	rule.inflected_length = 0;
+	return true;
+}
+
+inline bool operator == (const terminal_rule& first, const terminal_rule& second) {
+	if (first.terminals == nullptr
+	 || first.length != second.length
+	 || first.inflected_length != second.inflected_length)
+		return false;
+
+	/* compare terminal list */
+	for (unsigned int i = 0; i < first.length; i++)
+		if (first.terminals[i] != second.terminals[i]) return false;
+
+	/* compare inflected terminal list */
+	if (first.inflected == nullptr) {
+		if (second.inflected != nullptr) return false;
+	} else {
+		if (second.inflected == nullptr) return false;
+		for (unsigned int i = 0; i < first.inflected_length; i++)
+			if (first.inflected[i] != second.inflected[i]) return false;
+	}
+	return true;
+}
+
+inline bool operator < (const terminal_rule& first, const terminal_rule& second) {
+	if (first.length < second.length) return true;
+	else if (first.length > second.length) return false;
+	else if (first.inflected_length < second.inflected_length) return true;
+	else if (first.inflected_length > second.inflected_length) return false;
+
+	/* first compare the terminals */
+	for (unsigned int i = 0; i < first.length; i++) {
+		if (first.terminals[i] < second.terminals[i]) return true;
+		else if (first.terminals[i] > second.terminals[i]) return false;
+	}
+
+	/* compare inflected terminal list */
+	if (first.inflected == nullptr) {
+		if (second.inflected != nullptr) return true;
+	} else {
+		if (second.inflected == nullptr) return false;
+		for (unsigned int i = 0; i < first.inflected_length; i++) {
+			if (first.inflected[i] < second.inflected[i]) return true;
+			else if (first.inflected[i] > second.inflected[i]) return false;
+		}
+	}
+	return false;
+}
+
+template<typename Stream, typename Printer>
+inline bool print(const terminal_rule& rule, Stream& out, Printer& printer) {
+
+	if (!print('"', out) || !print(sequence(rule.terminals, rule.length), out, printer) || !print('"', out))
+		return false;
+	if (rule.inflected == nullptr) return true;
+	return print("/\"", out) && print(sequence(rule.inflected, rule.inflected_length), out, printer) && print('"', out);
+}
+
+template<typename Stream>
+inline bool read(terminal_rule& r, Stream& in, hash_map<string, unsigned int>& token_map) {
+
+	if (!read(r.length, in))
+		return false;
+	r.terminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * r.length));
+	if (r.terminals == nullptr) {
+		fprintf(stderr, "read ERROR: Insufficient memory for `terminal_rule.terminals`.\n");
+		return false;
+	} if (!read(r.terminals, in, r.length)) {
+		core::free(r.terminals);
+		return false;
+	}
+
+	if (!read(r.inflected_length, in))
+		return false;
+	if (r.inflected_length == 0) {
+		r.inflected = nullptr;
+		return true;
+	}
+
+	r.inflected = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * r.inflected_length));
+	if (r.inflected == nullptr) {
+		fprintf(stderr, "read ERROR: Insufficient memory for `terminal_rule.inflected`.\n");
+		return false;
+	} if (!read(r.inflected, in, r.length)) {
+		core::free(r.terminals); core::free(r.inflected);
+		return false;
+	}
+	return true;
+}
+
+template<typename Stream>
+inline bool write(const terminal_rule& r, Stream& out, const string** token_map) {
+	if (!write(r.length, out) || !write(r.terminals, out, r.length) || !write(r.inflected_length, out))
+		return false;
+	if (r.inflected == nullptr)
+		return true;
+	else return write(r.inflected, out, r.inflected_length);
+}
+
+/* Represents a production rule in the semantic grammar. */
+template<typename Semantics>
+struct rule {
+	rule_type type;
+	union {
+		nonterminal_rule<Semantics> nt;
+		terminal_rule t;
+	};
+
+	rule(const rule<Semantics>& src) : type(src.type) {
+		if (!initialize(src))
 			exit(EXIT_FAILURE);
 	}
 
-	rule(const rule<Semantics>& src, unsigned int new_length) : length(new_length) {
-		if (!initialize(src, new_length))
-			exit(EXIT_FAILURE);
-	}
-
-	rule(const sequence& terminal) : length(terminal.length) {
+	rule(const sequence& terminal) : type(rule_type::TERMINAL) {
 		if (!initialize(terminal))
 			exit(EXIT_FAILURE);
 	}
 
-	rule(const syntax_node<Semantics>* const* terminals, unsigned int terminal_count) :
-			transformations(nullptr), length(0)
+	rule(const syntax_node<Semantics>* const* terminals, unsigned int terminal_count) : type(rule_type::TERMINAL)
 	{
 #if !defined(NDEBUG)
 		if (terminal_count == 0)
 			fprintf(stderr, "rule WARNING: `length` is zero.\n");
 #endif
 
+		t.length = 0;
 		unsigned int total_length = 0;
 		for (unsigned int i = 0; i < terminal_count; i++) {
 #if !defined(NDEBUG)
@@ -261,62 +571,78 @@ struct rule {
 			if (!terminals[i]->right.is_terminal())
 				fprintf(stderr, "rule WARNING: This constructor should only be used with sequences of terminals.\n");
 #endif
-			total_length += terminals[i]->right.length;
+			total_length += terminals[i]->right.t.length;
 		}
 
-		nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * total_length);
-		if (nonterminals == nullptr) exit(EXIT_FAILURE);
+		t.terminals = (unsigned int*) malloc(sizeof(unsigned int) * total_length);
+		if (t.terminals == nullptr) exit(EXIT_FAILURE);
 		for (unsigned int i = 0; i < terminal_count; i++)
-			for (unsigned int j = 0; j < terminals[i]->right.length; j++)
-				nonterminals[length++] = terminals[i]->right.nonterminals[j];
+			for (unsigned int j = 0; j < terminals[i]->right.t.length; j++)
+				t.terminals[t.length++] = terminals[i]->right.t.terminals[j];
+		t.inflected = nullptr;
+		t.inflected_length = 0;
 	}
 
 	~rule() { free(); }
 
 	inline void operator = (const rule<Semantics>& src) {
-		length = src.length;
-		if (!initialize(src, src.length))
+		type = src.type;
+		if (!initialize(src))
 			exit(EXIT_FAILURE);
 	}
 
 	inline bool is_terminal() const {
-		return transformations == nullptr;
+		return type == rule_type::TERMINAL;
 	}
 
 	inline const sequence get_terminal() const {
-		return sequence(nonterminals, length);
+		return sequence(t.terminals, t.length);
 	}
 
 	static inline unsigned int hash(const rule<Semantics>& rule) {
-		unsigned int hash = default_hash(rule.nonterminals, rule.length);
-		if (rule.is_terminal()) return hash;
-		for (unsigned int i = 0; i < rule.length; i++)
-			hash ^= hasher<transformation<Semantics>>::hash(rule.transformations[i]);
-		return hash;
+		/* TODO: precompute these and store them in a table for faster access */
+		unsigned int type_hash = default_hash<rule_type, 4027360733>(rule.type);
+		switch (rule.type) {
+		case rule_type::TERMINAL:
+			return type_hash ^ terminal_rule::hash(rule.t);
+		case rule_type::NONTERMINAL:
+			return type_hash ^ nonterminal_rule<Semantics>::hash(rule.nt);
+		case rule_type::EMPTY: break;
+		}
+		fprintf(stderr, "rule.hash ERROR: Unrecognized rule_type.\n");
+		exit(EXIT_FAILURE);
 	}
 
 	static inline void move(const rule<Semantics>& src, rule<Semantics>& dst) {
-		dst.nonterminals = src.nonterminals;
-		dst.transformations = src.transformations;
-		dst.length = src.length;
+		dst.type = src.type;
+		switch (src.type) {
+		case rule_type::TERMINAL:
+			core::move(src.t, dst.t); return;
+		case rule_type::NONTERMINAL:
+			core::move(src.nt, dst.nt); return;
+		case rule_type::EMPTY: break;
+		}
+		fprintf(stderr, "rule.move ERROR: Unrecognized rule_type.\n");
+		exit(EXIT_FAILURE);
 	}
 
 	static inline bool copy(const rule<Semantics>& src, rule<Semantics>& dst) {
-		return init(dst, src, src.length);
+		return init(dst, src);
 	}
 
 	static inline void swap(rule<Semantics>& first, rule<Semantics>& second) {
-		core::swap(first.nonterminals, second.nonterminals);
-		core::swap(first.transformations, second.transformations);
-		core::swap(first.length, second.length);
+		char* first_data = (char*) &first;
+		char* second_data = (char*) &second;
+		for (unsigned int i = 0; i < sizeof(rule<Semantics>); i++)
+			core::swap(first_data[i], second_data[i]);
 	}
 
 	static inline bool is_empty(const rule<Semantics>& rule) {
-		return rule.nonterminals == nullptr;
+		return rule.type == rule_type::EMPTY;
 	}
 
 	static inline void set_empty(rule<Semantics>& rule) {
-		rule.nonterminals = nullptr;
+		rule.type = rule_type::EMPTY;
 	}
 
 	static inline void set_empty(rule<Semantics>* rules, unsigned int count) {
@@ -328,100 +654,62 @@ struct rule {
 	}
 
 private:
-	/* NOTE: this function assumes 'length' was initialized */
-	bool initialize(const rule<Semantics>& src, unsigned int new_length) {
-		nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * length));
-		if (nonterminals == nullptr) {
-			fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.nonterminals`.\n");
-			return false;
+	bool initialize(const rule<Semantics>& src) {
+		switch (src.type) {
+		case rule_type::TERMINAL:
+			return init(t, src.t);
+		case rule_type::NONTERMINAL:
+			return init(nt, src.nt);
+		case rule_type::EMPTY: break;
 		}
-
-		for (unsigned int i = 0; i < src.length; i++)
-			nonterminals[i] = src.nonterminals[i];
-		if (src.is_terminal()) {
-			transformations = nullptr;
-		} else {
-			transformations = (transformation<Semantics>*) malloc(
-					max((size_t) 1, sizeof(transformation<Semantics>) * length));
-			if (transformations == nullptr) {
-				fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.transformations`.\n");
-				core::free(nonterminals); return false;
-			}
-			for (unsigned int i = 0; i < src.length; i++) {
-				if (!init(transformations[i], src.transformations[i])) {
-					fprintf(stderr, "rule.initialize ERROR: Insufficient memory for `rule.transformations[%u]`.\n", i);
-					for (unsigned int j = 0; j < i; j++) core::free(transformations[j]);
-					core::free(transformations); core::free(nonterminals);
-					return false;
-				}
-			}
-		}
-		return true;
+		fprintf(stderr, "rule.move ERROR: Unrecognized rule_type.\n");
+		return false;
 	}
 
-	/* NOTE: this function assumes 'length' was initialized */
 	bool initialize(const sequence& terminal) {
-		nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * length));
-		if (nonterminals == NULL) {
-			fprintf(stderr, "rule.initialize ERROR: Out of memory.\n");
-			return false;
-		}
-		transformations = nullptr;
-		for (unsigned int i = 0; i < terminal.length; i++)
-			nonterminals[i] = terminal.tokens[i];
-		return true;
+		return init(t, terminal);
 	}
 
 	inline void free() {
-		core::free(nonterminals);
-		if (transformations != nullptr) {
-			for (unsigned int i = 0; i < length; i++)
-				core::free(transformations[i]);
-			core::free(transformations);
+		switch (type) {
+		case rule_type::TERMINAL:
+			core::free(t); return;
+		case rule_type::NONTERMINAL:
+			core::free(nt); return;
+		case rule_type::EMPTY: break;
 		}
+		fprintf(stderr, "rule.free ERROR: Unrecognized rule_type.\n");
+		exit(EXIT_FAILURE);
 	}
 
-	template<typename A> friend bool init(rule<A>&, unsigned int);
-	template<typename A> friend bool init(rule<A>&, const rule<A>&, unsigned int);
+	template<typename A> friend bool init(rule<A>&, const rule<A>&);
 	template<typename A> friend bool init(rule<A>&, const sequence&);
-	template<typename A, typename B> friend bool read(rule<A>&, B&, hash_map<string, unsigned int>&);
 };
 
 template<typename Semantics>
-inline bool init(rule<Semantics>& dst, const rule<Semantics>& src, unsigned int new_length) {
-	dst.length = new_length;
-	return dst.initialize(src, new_length);
+inline bool init(rule<Semantics>& r, const rule<Semantics>& src) {
+	r.type = src.type;
+	return r.initialize(src);
 }
 
 template<typename Semantics>
-inline bool init(rule<Semantics>& dst, const rule<Semantics>& src) {
-	return init(dst, src, src.length);
-}
-
-template<typename Semantics>
-inline bool init(rule<Semantics>& rule, const sequence& terminal) {
-	rule.length = terminal.length;
-	return rule.initialize(terminal);
+inline bool init(rule<Semantics>& r, const sequence& terminal) {
+	r.type = rule_type::TERMINAL;
+	return r.initialize(terminal);
 }
 
 template<typename Semantics>
 inline bool operator == (const rule<Semantics>& first, const rule<Semantics>& second) {
-	if (first.length != second.length || first.nonterminals == NULL)
-		return false;
-
-	/* compare nonterminal list */
-	for (unsigned int i = 0; i < first.length; i++)
-		if (first.nonterminals[i] != second.nonterminals[i]) return false;
-
-	if (first.is_terminal()) {
-		if (!second.is_terminal()) return false;
-		else return true;
-	} else if (second.is_terminal()) return false;
-
-	/* compare function list */
-	for (unsigned int i = 0; i < first.length; i++)
-		if (first.transformations[i] != second.transformations[i]) return false;
-	return true;
+	if (first.type != second.type) return false;
+	switch (first.type) {
+	case rule_type::TERMINAL:
+		return first.t == second.t;
+	case rule_type::NONTERMINAL:
+		return first.nt == second.nt;
+	case rule_type::EMPTY: break;
+	}
+	fprintf(stderr, "operator == ERROR: Unrecognized rule_type.\n");
+	exit(EXIT_FAILURE);
 }
 
 template<typename Semantics>
@@ -431,88 +719,60 @@ inline bool operator != (const rule<Semantics>& first, const rule<Semantics>& se
 
 template<typename Semantics>
 inline bool operator < (const rule<Semantics>& first, const rule<Semantics>& second) {
-	if (first.length < second.length) return true;
-	else if (first.length > second.length) return false;
-
-	if (first.is_terminal()) {
-		if (!second.is_terminal()) return true;
-	} else {
-		if (second.is_terminal()) return false;
+	if (first.type < second.type) return true;
+	else if (first.type > second.type) return false;
+	switch (first.type) {
+	case rule_type::TERMINAL:
+		return first.t < second.t;
+	case rule_type::NONTERMINAL:
+		return first.nt < second.nt;
+	case rule_type::EMPTY: break;
 	}
-
-	/* first compare the nonterminals */
-	for (unsigned int i = 0; i < first.length; i++) {
-		if (first.nonterminals[i] < second.nonterminals[i]) return true;
-		else if (first.nonterminals[i] > second.nonterminals[i]) return false;
-	}
-
-	if (!first.is_terminal()) {
-		/* compare the transformation functions */
-		for (unsigned int i = 0; i < first.length; i++) {
-			if (first.transformations[i] < second.transformations[i]) return true;
-			else if (second.transformations[i] < first.transformations[i]) return false;
-		}
-	}
-
-	return false;
+	fprintf(stderr, "operator < ERROR: Unrecognized rule_type.\n");
+	exit(EXIT_FAILURE);
 }
 
 template<typename Semantics, typename Stream, typename AtomPrinter, typename NonterminalPrinter>
 inline bool print(const rule<Semantics>& r, Stream& out, pair<AtomPrinter&, NonterminalPrinter&> printers) {
-	if (r.is_terminal())
-		return print('"', out) && print(sequence(r.nonterminals, r.length), out, printers.key) && print('"', out);
-	if (!print('(', out)) return false;
-	for (unsigned int i = 0; i < r.length; i++) {
-		if (i > 0 && !print(' ', out)) return false;
-		if (!print(r.nonterminals[i], out, printers.value) || !print(':', out) || !print(r.transformations[i], out))
-			return false;
+	switch (r.type) {
+	case rule_type::TERMINAL:
+		return print(r.t, out, printers.key);
+	case rule_type::NONTERMINAL:
+		return print(r.nt, out, printers.value);
+	case rule_type::EMPTY: break;
 	}
-	return print(')', out);
+	fprintf(stderr, "print ERROR: Unrecognized rule_type.\n");
+	return false;
 }
 
 template<typename Semantics, typename Stream>
 bool read(rule<Semantics>& r, Stream& stream, hash_map<string, unsigned int>& token_map)
 {
-	bool is_terminal;
-	if (!read(r.length, stream) || !read(is_terminal, stream))
-		return false;
-	r.nonterminals = (unsigned int*) malloc(max((size_t) 1, sizeof(unsigned int) * r.length));
-	if (r.nonterminals == nullptr) {
-		fprintf(stderr, "read ERROR: Insufficient memory for `rule.nonterminals`.\n");
-		return false;
-	} if (!read(r.nonterminals, stream, r.length)) {
-		core::free(r.nonterminals);
-		return false;
+	if (!read(r.type, stream)) return false;
+	switch (r.type) {
+	case rule_type::TERMINAL:
+		return read(r.t, stream, token_map);
+	case rule_type::NONTERMINAL:
+		return read(r.nt, stream, token_map);
+	case rule_type::EMPTY: break;
 	}
-
-	if (is_terminal) {
-		r.transformations = nullptr;
-	} else {
-		r.transformations = (transformation<Semantics>*) malloc(
-				max((size_t) 1, sizeof(transformation<Semantics>) * r.length));
-		if (r.transformations == nullptr) {
-			fprintf(stderr, "read ERROR: Insufficient memory for `rule.transformations`.\n");
-			core::free(r.nonterminals); return false;
-		} if (!read(r.transformations, stream, r.length)) {
-			core::free(r.nonterminals); core::free(r.transformations);
-			return false;
-		}
-	}
-	return true;
+	fprintf(stderr, "read ERROR: Unrecognized rule_type.\n");
+	return false;
 }
 
 template<typename Semantics, typename Stream>
 bool write(const rule<Semantics>& r, Stream& stream, const string** token_map)
 {
-	if (!write(r.length, stream)
-	 || !write(r.is_terminal(), stream)
-	 || !write(r.nonterminals, stream, r.length))
-		return false;
-	if (r.is_terminal()) {
-		return true;
-	} else {
-		return write(r.transformations, stream, r.length);
+	if (!write(r.type, stream)) return false;
+	switch (r.type) {
+	case rule_type::TERMINAL:
+		return write(r.t, stream, token_map);
+	case rule_type::NONTERMINAL:
+		return write(r.nt, stream, token_map);
+	case rule_type::EMPTY: break;
 	}
+	fprintf(stderr, "write ERROR: Unrecognized rule_type.\n");
+	return false;
 }
 
 /* forward declarations */
@@ -745,22 +1005,19 @@ struct syntax_node {
 	syntax_node(const syntax_node<Semantics>& src) :
 		right(src.right), reference_count(1)
 	{
-		if (!initialize(src, src.right.length))
-			exit(EXIT_FAILURE);
-	}
-
-	syntax_node(const syntax_node<Semantics>& src, unsigned int new_length) :
-		right(src.right, new_length), reference_count(1)
-	{
-		if (!initialize(src, new_length))
+		if (!initialize(src))
 			exit(EXIT_FAILURE);
 	}
 
 	syntax_node(const rule<Semantics>& r) : right(r), reference_count(1) {
-		children = (syntax_node<Semantics>**) calloc(r.length, sizeof(syntax_node<Semantics>*));
-		if (children == NULL) {
-			fprintf(stderr, "syntax_node ERROR: Insufficient memory for child node array.\n");
-			exit(EXIT_FAILURE);
+		if (r.is_terminal()) {
+			children = nullptr;
+		} else {
+			children = (syntax_node<Semantics>**) calloc(r.nt.length, sizeof(syntax_node<Semantics>*));
+			if (children == NULL) {
+				fprintf(stderr, "syntax_node ERROR: Insufficient memory for child node array.\n");
+				exit(EXIT_FAILURE);
+			}
 		}
 	}
 
@@ -768,7 +1025,7 @@ struct syntax_node {
 
 	inline void operator = (const syntax_node<Semantics>& src) {
 		right = src.right;
-		if (!initialize(src, src.right.length))
+		if (!initialize(src))
 			exit(EXIT_FAILURE);
 		reference_count = 1;
 	}
@@ -849,18 +1106,22 @@ struct syntax_node {
 	}
 
 private:
-	inline bool initialize(const syntax_node<Semantics>& src, unsigned int new_length) {
+	inline bool initialize(const syntax_node<Semantics>& src) {
 		if (src.children == NULL) {
 			children = NULL;
 			return true;
 		}
-		children = (syntax_node<Semantics>**) malloc(sizeof(syntax_node<Semantics>*) * new_length);
+#if !defined(NDEBUG)
+		if (src.right.is_terminal())
+			fprintf(stderr, "syntax_node.initialize WARNING: `src.right` is a terminal rule.\n");
+#endif
+		children = (syntax_node<Semantics>**) malloc(sizeof(syntax_node<Semantics>*) * src.right.nt.length);
 		if (children == NULL) {
 			fprintf(stderr, "syntax_node.initialize ERROR: Out of memory.\n");
 			core::free(right);
 			return false;
 		}
-		for (unsigned int i = 0; i < src.right.length; i++) {
+		for (unsigned int i = 0; i < src.right.nt.length; i++) {
 			children[i] = src.children[i];
 			if (children[i] != NULL)
 				children[i]->reference_count++;
@@ -872,7 +1133,7 @@ private:
 		reference_count--;
 		if (reference_count == 0) {
 			if (children != NULL) {
-				for (unsigned int i = 0; i < right.length; i++) {
+				for (unsigned int i = 0; i < right.nt.length; i++) {
 					if (children[i] != NULL) {
 						core::free(*children[i]);
 						if (children[i]->reference_count == 0)
@@ -884,36 +1145,23 @@ private:
 		}
 	}
 
-	template<typename A>
-	friend bool init(syntax_node<A>&, const syntax_node<A>&, unsigned int);
-
-	template<typename A>
-	friend bool init(syntax_node<A>&, const syntax_node<A>* const*, unsigned int);
+	template<typename A> friend bool init(syntax_node<A>&, const rule<A>&);
+	template<typename A> friend bool init(syntax_node<A>&, const syntax_node<A>&);
 };
-
-template<typename Semantics>
-inline bool init(syntax_node<Semantics>& node, unsigned int rule_length)
-{
-	node.children = (syntax_node<Semantics>**) calloc(max(1u, rule_length), sizeof(syntax_node<Semantics>*));
-	if (node.children == NULL) {
-		fprintf(stderr, "init ERROR: Insufficient memory for child node array in syntax_node.\n");
-		return false;
-	} else if (!init(node.right, rule_length)) {
-		fprintf(stderr, "init ERROR: Insufficient memory for rule in syntax_node.\n");
-		free(node.children); return false;
-	}
-	node.reference_count = 1;
-	return true;
-}
 
 template<typename Semantics>
 inline bool init(syntax_node<Semantics>& node, const rule<Semantics>& rule)
 {
-	node.right = rule;
-	node.children = (syntax_node<Semantics>**) calloc(rule.length, sizeof(syntax_node<Semantics>*));
-	if (node.children == NULL) {
-		fprintf(stderr, "init ERROR: Insufficient memory for child node array in syntax_node.\n");
+	if (!init(node.right, rule))
 		return false;
+	if (rule.is_terminal()) {
+		node.children = nullptr;
+	} else {
+		node.children = (syntax_node<Semantics>**) calloc(rule.nt.length, sizeof(syntax_node<Semantics>*));
+		if (node.children == NULL) {
+			fprintf(stderr, "init ERROR: Insufficient memory for child node array in syntax_node.\n");
+			free(node.right); return false;
+		}
 	}
 	node.reference_count = 1;
 	return true;
@@ -941,24 +1189,16 @@ inline bool init(syntax_node<Semantics>& node,
 
 template<typename Semantics>
 inline bool init(syntax_node<Semantics>& node,
-		const syntax_node<Semantics>& src,
-		unsigned int new_length)
+		const syntax_node<Semantics>& src)
 {
 	node.reference_count = 1;
-	if (!init(node.right, src.right, new_length))
+	if (!init(node.right, src.right))
 		return false;
-	else if (!node.initialize(src, new_length)) {
+	else if (!node.initialize(src)) {
 		free(node.right);
 		return false;
 	}
 	return true;
-}
-
-template<typename Semantics>
-inline bool init(syntax_node<Semantics>& node,
-		const syntax_node<Semantics>& src)
-{
-	return init(node, src, src.right.length);
 }
 
 template<typename Semantics>
@@ -994,17 +1234,17 @@ bool print(const syntax_node<Semantics>& node, Stream& out, unsigned int indent,
 	if (node.is_terminal()) {
 		success &= print(' ', out);
 		success &= print('\'', out);
-		success &= print(node.right.nonterminals[0], out, terminal_printer);
-		for (unsigned int i = 1; i < node.right.length; i++) {
+		success &= print(node.right.t.terminals[0], out, terminal_printer);
+		for (unsigned int i = 1; i < node.right.t.length; i++) {
 			success &= print(' ', out);
-			success &= print(node.right.nonterminals[i], out, terminal_printer);
+			success &= print(node.right.t.terminals[i], out, terminal_printer);
 		}
 		success &= print('\'', out);
 	} else {
-		for (unsigned int i = 0; i < node.right.length; i++) {
+		for (unsigned int i = 0; i < node.right.nt.length; i++) {
 			success &= print('\n', out) && print_indent(indent + 1, out);
-			success &= print('(', out) && print(node.right.nonterminals[i], out, nonterminal_printer);
-			success &= print(':', out) && print(node.right.transformations[i], out);
+			success &= print('(', out) && print(node.right.nt.nonterminals[i], out, nonterminal_printer);
+			success &= print(':', out) && print(node.right.nt.transformations[i], out);
 			if (node.children[i] == NULL) {
 				success &= print(" <null>", out);
 			} else {
@@ -1032,12 +1272,12 @@ bool read(syntax_node<Semantics>& node, Stream& stream, RuleReader& reader) {
 	if (node.right.is_terminal()) {
 		node.children = NULL;
 	} else {
-		node.children = (syntax_node<Semantics>**) calloc(node.right.length, sizeof(syntax_node<Semantics>*));
+		node.children = (syntax_node<Semantics>**) calloc(node.right.nt.length, sizeof(syntax_node<Semantics>*));
 		if (node.children == NULL) {
 			free(node.right);
 			return false;
 		}
-		for (unsigned int i = 0; i < node.right.length; i++) {
+		for (unsigned int i = 0; i < node.right.nt.length; i++) {
 			node.children[i] = (syntax_node<Semantics>*) malloc(sizeof(syntax_node<Semantics>));
 			if (node.children[i] == NULL
 			 || !read(*node.children[i], stream, reader))
@@ -1061,7 +1301,7 @@ template<typename Semantics, typename Stream, typename RuleWriter>
 bool write(const syntax_node<Semantics>& node, Stream& stream, RuleWriter& writer) {
 	if (!write(node.right, stream, writer)) return false;
 	if (!node.right.is_terminal()) {
-		for (unsigned int i = 0; i < node.right.length; i++)
+		for (unsigned int i = 0; i < node.right.nt.length; i++)
 			if (!write(*node.children[i], stream, writer)) return false;
 	}
 	return true;
@@ -1072,10 +1312,20 @@ inline bool yield(const rule<Semantics>& terminal,
 		const Distribution& rule_distribution, const Semantics& logical_form,
 		unsigned int*& sentence, unsigned int& length, unsigned int& capacity)
 {
-	if (!ensure_capacity(sentence, capacity, length + terminal.length))
+	unsigned int* leaf;
+	unsigned int leaf_length;
+	if (terminal.t.inflected != nullptr) {
+		leaf = terminal.t.inflected;
+		leaf_length = terminal.t.inflected_length;
+	} else {
+		leaf = terminal.t.terminals;
+		leaf_length = terminal.t.length;
+	}
+
+	if (!ensure_capacity(sentence, capacity, length + leaf_length))
 		return false;
-	memcpy(sentence + length, terminal.nonterminals, sizeof(unsigned int) * terminal.length);
-	length += terminal.length;
+	memcpy(sentence + length, leaf, sizeof(unsigned int) * leaf_length);
+	length += leaf_length;
 	return true;
 }
 
@@ -1091,14 +1341,14 @@ bool yield(const grammar<Semantics, Distribution>& G,
 				logical_form, std::forward<OutputType>(output)...);
 	}
 
-	for (unsigned int i = 0; i < node.right.length; i++) {
+	for (unsigned int i = 0; i < node.right.nt.length; i++) {
 		Semantics transformed;
-		if (!apply(node.right.transformations[i], logical_form, transformed)) {
+		if (!apply(node.right.nt.transformations[i], logical_form, transformed)) {
 			print("yield ERROR: Unable to apply semantic transformation '", stderr);
-			print(node.right.transformations[i], stderr); print("' to logical form:\n", stderr);
+			print(node.right.nt.transformations[i], stderr); print("' to logical form:\n", stderr);
 			print(logical_form, stderr, printer); print('\n', stderr); return false;
 		}
-		if (!yield(G, *node.children[i], node.right.nonterminals[i], transformed, printer, std::forward<OutputType>(output)...))
+		if (!yield(G, *node.children[i], node.right.nt.nonterminals[i], transformed, printer, std::forward<OutputType>(output)...))
 			return false;
 	}
 	return true;
@@ -1167,12 +1417,12 @@ bool log_probability(double& score,
 	score += rule_score;
 
 	if (r.is_terminal()) return true;
-	for (unsigned int i = 0; i < r.length; i++) {
+	for (unsigned int i = 0; i < r.nt.length; i++) {
 		Semantics transformed;
 		if (syntax.children[i] == NULL) continue;
-		if (!apply(r.transformations[i], logical_form, transformed))
+		if (!apply(r.nt.transformations[i], logical_form, transformed))
 			return false;
-		else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nonterminals[i]))
+		else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nt.nonterminals[i]))
 			return false;
 	}
 	return true;
@@ -1241,15 +1491,15 @@ bool add_tree(unsigned int nonterminal_id,
 		return false;
 
 	if (syntax.is_terminal()) return true;
-	for (unsigned int i = 0; i < syntax.right.length; i++) {
+	for (unsigned int i = 0; i < syntax.right.nt.length; i++) {
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.transformations[i], logical_form, transformed)) {
+		if (!apply(syntax.right.nt.transformations[i], logical_form, transformed)) {
 			print("add_tree ERROR: Unable to apply semantic transformation function '", stderr);
-			print(syntax.right.transformations[i], stderr); print("' to the logical form:\n", stderr);
+			print(syntax.right.nt.transformations[i], stderr); print("' to the logical form:\n", stderr);
 			print(logical_form, stderr, printer); print('\n', stderr); return false;
-		} if (!add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, printer))
+		} if (!add_tree(syntax.right.nt.nonterminals[i], *syntax.children[i], transformed, G, printer))
 			return false;
 	}
 	return true;
@@ -1306,12 +1556,12 @@ bool add_tree(unsigned int nonterminal_id,
 		return false;
 
 	if (syntax.is_terminal()) return true;
-	for (unsigned int i = 0; i < syntax.right.length; i++) {
+	for (unsigned int i = 0; i < syntax.right.nt.length; i++) {
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.transformations[i], logical_form, transformed)
-		 || !add_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
+		if (!apply(syntax.right.nt.transformations[i], logical_form, transformed)
+		 || !add_tree(syntax.right.nt.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
 	return true;
@@ -1334,12 +1584,12 @@ bool remove_tree(unsigned int nonterminal_id,
 	N.clear();
 
 	if (syntax.is_terminal()) return true;
-	for (unsigned int i = 0; i < syntax.right.length; i++) {
+	for (unsigned int i = 0; i < syntax.right.nt.length; i++) {
 		if (syntax.children[i] == NULL) continue;
 
 		Semantics transformed;
-		if (!apply(syntax.right.transformations[i], logical_form, transformed)
-		 || !remove_tree(syntax.right.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
+		if (!apply(syntax.right.nt.transformations[i], logical_form, transformed)
+		 || !remove_tree(syntax.right.nt.nonterminals[i], *syntax.children[i], transformed, G, token_map, score))
 			return false;
 	}
 	return true;
@@ -1370,22 +1620,22 @@ inline int sample(
 		syntax->children = NULL;
 	} else {
 		syntax->children = (syntax_node<Semantics>**) calloc(
-				syntax->right.length, sizeof(syntax_node<Semantics>*));
+				syntax->right.nt.length, sizeof(syntax_node<Semantics>*));
 		if (syntax->children == NULL) {
 			fprintf(stderr, "sample ERROR: Insufficient memory for child nodes.\n");
 			free(*syntax); free(syntax);
 			syntax = NULL;
 			return -1;
 		}
-		for (unsigned int i = 0; i < syntax->right.length; i++) {
+		for (unsigned int i = 0; i < syntax->right.nt.length; i++) {
 			Semantics transformed;
-			if (!apply(syntax->right.transformations[i], logical_form, transformed)) {
+			if (!apply(syntax->right.nt.transformations[i], logical_form, transformed)) {
 				free(*syntax); free(syntax);
 				syntax = NULL;
 				return 1;
 			}
 
-			int status = sample(G, syntax->children[i], transformed, syntax->right.nonterminals[i]);
+			int status = sample(G, syntax->children[i], transformed, syntax->right.nt.nonterminals[i]);
 			if (status != 0) {
 				free(*syntax); free(syntax);
 				syntax = NULL;
@@ -1394,177 +1644,6 @@ inline int sample(
 		}
 	}
 	return 0;
-}
-
-template<typename Semantics, typename Distribution,
-	typename NonterminalPrinter, typename TerminalPrinter>
-bool is_parseable(
-		const syntax_node<Semantics>& syntax,
-		const Semantics& logical_form,
-		grammar<Semantics, Distribution>& G,
-		Semantics& logical_form_set,
-		pair<TerminalPrinter&, NonterminalPrinter&>& printers,
-		const string** token_map, double& prior,
-		unsigned int nonterminal = 1)
-{
-#if defined(USE_NONTERMINAL_PREITERATOR)
-	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
-			syntax, logical_form, logical_form_set, printers, token_map))
-		return false;
-
-	double new_prior = log_probability<false>(logical_form_set);
-	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
-		print("is_parseable ERROR: The prior is not monotonic after checking "
-				"parseability with the rule distribution to obtain logical form set ", stderr);
-		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
-		print(syntax.right, stderr, printers); print('\n', stderr);
-		return false;
-	}
-	prior = new_prior;
-#endif
-
-	/* TODO: make the error messages more informative */
-	if (!syntax.right.is_terminal()) {
-		for (unsigned int i = 0; i < syntax.right.length; i++) {
-			Semantics& child_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
-			Semantics& child_logical_form_set = *((Semantics*) alloca(sizeof(Semantics)));
-			if (!apply(syntax.right.transformations[i], logical_form_set, child_logical_form_set)) {
-				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("' to logical form set ", stderr);
-				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
-				print(syntax.right, stderr, printers); print('\n', stderr);
-				return false;
-			} else if (!apply(syntax.right.transformations[i], logical_form, child_logical_form)) {
-				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("' to ground truth logical form ", stderr);
-				print(logical_form, stderr, printers.key); print(" at rule: ", stderr);
-				print(syntax.right, stderr, printers); print('\n', stderr);
-				free(child_logical_form_set);
-				return false;
-			}
-
-			double child_prior = log_probability<false>(child_logical_form_set);
-			if (child_prior == -std::numeric_limits<double>::infinity()) {
-				print("is_parseable ERROR: The prior is -inf after applying semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("' to logical form set ", stderr);
-				print(logical_form_set, stderr, printers.key); print(" to obtain logical form set ", stderr);
-				print(child_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
-				print(syntax.right, stderr, printers); print('\n', stderr);
-				free(child_logical_form); free(child_logical_form_set);
-				return false;
-			} else if (!is_parseable(*syntax.children[i], child_logical_form, G, child_logical_form_set, printers, token_map, child_prior, syntax.right.nonterminals[i])) {
-				free(child_logical_form_set);
-				free(child_logical_form);
-				return false;
-			}
-			free(child_logical_form);
-
-			/* invert the child logical form set */
-			Semantics* inverse = nullptr; unsigned int inverse_count;
-			if (!invert(inverse, inverse_count, syntax.right.transformations[i], logical_form_set, child_logical_form_set) || inverse_count == 0) {
-				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("' at rule: ", stderr);
-				print(syntax.right, stderr, printers); print('\n', stderr);
-				print("Tried to invert ", stderr); print(child_logical_form_set, stderr, printers.key);
-				print(" and intersect with ", stderr); print(logical_form_set, stderr, printers.key); print(".\n", stderr);
-				free(child_logical_form_set);
-				if (inverse != nullptr) {
-					for (unsigned int j = 0; j < inverse_count; j++)
-						free(inverse[j]);
-					free(inverse);
-				}
-				return false;
-			}
-			free(child_logical_form_set);
-			free(logical_form_set);
-			/* find `j` such that `logical_form` is a subset of `inverse[j]` */
-			unsigned int j;
-			for (j = 0; j < inverse_count; j++)
-				if (is_subset(logical_form, inverse[j])) break;
-			if (j == inverse_count) {
-				print("is_parseable ERROR: The true inverse is not an element of any `inverse[j]` after inverting semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("'.\n", stderr);
-				print("  True inverse: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
-				for (j = 0; j < inverse_count; j++) {
-					print("  inverse[", stderr); print(j, stderr); print("]: ", stderr); print(inverse[j], stderr, printers.key); print('\n', stderr);
-					free(inverse[j]);
-				}
-				free(inverse);
-				initialize_any(logical_form_set);
-				return false;
-			}
-			logical_form_set = inverse[j];
-			for (unsigned int k = 0; k < inverse_count; k++)
-				free(inverse[k]);
-			free(inverse);
-
-			double new_prior = log_probability<false>(logical_form_set);
-			if (new_prior > prior || new_prior > child_prior || new_prior == -std::numeric_limits<double>::infinity()) {
-				print("is_parseable ERROR: The prior is not monotonic after inverting semantic transformation function '", stderr);
-				print(syntax.right.transformations[i], stderr); print("' to obtain logical form set ", stderr);
-				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
-				print(syntax.right, stderr, printers); print('\n', stderr);
-				return false;
-			}
-			prior = new_prior;
-		}
-	}
-
-#if !defined(USE_NONTERMINAL_PREITERATOR)
-	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
-			syntax, logical_form, logical_form_set, printers, token_map))
-		return false;
-
-	double new_prior = log_probability<false>(logical_form_set);
-	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
-		print("is_parseable ERROR: The prior is not monotonic after checking "
-				"parseability with the rule distribution to obtain logical form set ", stderr);
-		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
-		print(syntax.right, stderr, printers); print('\n', stderr);
-		return false;
-	}
-	prior = new_prior;
-#endif
-	return true;
-}
-
-template<typename Semantics, typename Distribution,
-	typename NonterminalPrinter, typename TerminalPrinter>
-bool is_parseable(
-		syntax_node<Semantics>& syntax,
-		const Semantics& logical_form,
-		grammar<Semantics, Distribution>& G,
-		Semantics& logical_form_set,
-		NonterminalPrinter& nonterminal_printer,
-		TerminalPrinter& terminal_printer,
-		const string** token_map,
-		unsigned int nonterminal = 1)
-{
-	double prior = log_probability<false>(logical_form_set);
-	if (prior == -std::numeric_limits<double>::infinity()) {
-		fprintf(stderr, "is_parseable ERROR: The prior of the root logical form set is -inf: ");
-		print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
-		return false;
-	}
-
-	double true_prior = log_probability<true>(logical_form);
-	if (true_prior == -std::numeric_limits<double>::infinity()) {
-		fprintf(stderr, "is_parseable ERROR: The prior of the ground truth logical form is -inf: ");
-		print(logical_form, stderr, terminal_printer); print('\n', stderr);
-		return false;
-	}
-
-	auto printers = pair<TerminalPrinter&, NonterminalPrinter&>(terminal_printer, nonterminal_printer);
-	if (!is_parseable<Semantics, Distribution, TerminalPrinter, NonterminalPrinter>(
-			syntax, logical_form, G, logical_form_set, printers, token_map, prior, nonterminal))
-		return false;
-	if (!equivalent(logical_form, logical_form_set)) {
-		print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);
-		print("  Reference logical form: ", stderr); print(logical_form, stderr, terminal_printer); print('\n', stderr);
-		print("  Parsed logical form:    ", stderr); print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
-		return false;
-	}
-	return true;
 }
 
 struct null_semantics {
@@ -1699,7 +1778,7 @@ inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const null_semantics& logical_form, EmitRootFunction emit_root)
 {
-	return emit_root(words, logical_form);
+	return emit_root(words, {nullptr, 0}, logical_form);
 }
 
 template<typename PartOfSpeechType>
@@ -1708,6 +1787,242 @@ constexpr bool morphology_is_valid(
 		const sequence& terminal, PartOfSpeechType pos,
 		const null_semantics& logical_form)
 {
+	return true;
+}
+
+template<bool IsFirst, typename Semantics,
+	typename Distribution, typename Morphology,
+	typename NonterminalPrinter, typename TerminalPrinter>
+bool is_parseable(
+		const syntax_node<Semantics>& syntax,
+		const Semantics& logical_form,
+		grammar<Semantics, Distribution>& G,
+		const Morphology& morphology_parser,
+		Semantics& logical_form_set,
+		pair<TerminalPrinter&, NonterminalPrinter&>& printers,
+		const string** token_map, double& prior,
+		unsigned int nonterminal = 1)
+{
+#if defined(USE_NONTERMINAL_PREITERATOR)
+	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
+			syntax, logical_form, logical_form_set, printers, token_map))
+		return false;
+
+	double new_prior = log_probability<false>(logical_form_set);
+	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
+		print("is_parseable ERROR: The prior is not monotonic after checking "
+				"parseability with the rule distribution to obtain logical form set ", stderr);
+		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+		print(syntax.right, stderr, printers); print('\n', stderr);
+		return false;
+	}
+	prior = new_prior;
+#endif
+
+	if (!syntax.right.is_terminal()) {
+		for (unsigned int i = 0; i < syntax.right.nt.length; i++) {
+			Semantics& child_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
+			Semantics& child_logical_form_set = *((Semantics*) alloca(sizeof(Semantics)));
+			if (!apply(syntax.right.nt.transformations[i], logical_form_set, child_logical_form_set)) {
+				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' to logical form set ", stderr);
+				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				return false;
+			} else if (!apply(syntax.right.nt.transformations[i], logical_form, child_logical_form)) {
+				print("is_parseable ERROR: Unable to apply semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' to ground truth logical form ", stderr);
+				print(logical_form, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				free(child_logical_form_set);
+				return false;
+			}
+
+			double child_prior = log_probability<false>(child_logical_form_set);
+			if (child_prior == -std::numeric_limits<double>::infinity()) {
+				print("is_parseable ERROR: The prior is -inf after applying semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' to logical form set ", stderr);
+				print(logical_form_set, stderr, printers.key); print(" to obtain logical form set ", stderr);
+				print(child_logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				free(child_logical_form); free(child_logical_form_set);
+				return false;
+			} else if (i == 0 && !is_parseable<IsFirst>(*syntax.children[i], child_logical_form, G, morphology_parser, child_logical_form_set, printers, token_map, child_prior, syntax.right.nt.nonterminals[i])) {
+				free(child_logical_form_set);
+				free(child_logical_form);
+				return false;
+			} else if (i != 0 && !is_parseable<false>(*syntax.children[i], child_logical_form, G, morphology_parser, child_logical_form_set, printers, token_map, child_prior, syntax.right.nt.nonterminals[i])) {
+				free(child_logical_form_set);
+				free(child_logical_form);
+				return false;
+			}
+
+			/* invert the child logical form set */
+			Semantics* inverse = nullptr; unsigned int inverse_count;
+			if (!invert(inverse, inverse_count, syntax.right.nt.transformations[i], logical_form_set, child_logical_form_set) || inverse_count == 0) {
+				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				print("Tried to invert ", stderr); print(child_logical_form_set, stderr, printers.key);
+				print(" and intersect with ", stderr); print(logical_form_set, stderr, printers.key); print(".\n", stderr);
+				free(child_logical_form_set); free(child_logical_form);
+				if (inverse != nullptr) {
+					for (unsigned int j = 0; j < inverse_count; j++)
+						free(inverse[j]);
+					free(inverse);
+				}
+				return false;
+			}
+			free(child_logical_form_set);
+			free(logical_form_set);
+			/* find `j` such that `logical_form` is a subset of `inverse[j]` */
+			unsigned int j;
+			for (j = 0; j < inverse_count; j++)
+				if (is_subset(logical_form, inverse[j])) break;
+			if (j == inverse_count) {
+				print("is_parseable ERROR: The true inverse is not an element of any `inverse[j]` after inverting semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("'.\n", stderr);
+				print("  True inverse: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
+				for (j = 0; j < inverse_count; j++) {
+					print("  inverse[", stderr); print(j, stderr); print("]: ", stderr); print(inverse[j], stderr, printers.key); print('\n', stderr);
+					free(inverse[j]);
+				}
+				free(inverse);
+				initialize_any(logical_form_set);
+				free(child_logical_form);
+				return false;
+			}
+			logical_form_set = inverse[j];
+			for (unsigned int k = 0; k < inverse_count; k++)
+				free(inverse[k]);
+			free(inverse);
+
+			/* invert the child logical form (this isn't strictly needed for parsing, but it is for things like sampling, and is a good correctness check anyway) */
+			inverse = nullptr;
+			if (!invert(inverse, inverse_count, syntax.right.nt.transformations[i], logical_form, child_logical_form) || inverse_count == 0) {
+				print("is_parseable ERROR: Unable to invert semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				print("Tried to invert ground truth logical form ", stderr); print(child_logical_form, stderr, printers.key);
+				print(" and intersect with ", stderr); print(logical_form, stderr, printers.key); print(".\n", stderr);
+				if (inverse != nullptr) {
+					for (unsigned int j = 0; j < inverse_count; j++)
+						free(inverse[j]);
+					free(inverse);
+				}
+				free(child_logical_form);
+				return false;
+			}
+			free(child_logical_form);
+			for (unsigned int k = 0; k < inverse_count; k++)
+				free(inverse[k]);
+			free(inverse);
+
+			double new_prior = log_probability<false>(logical_form_set);
+			if (new_prior > prior || new_prior > child_prior || new_prior == -std::numeric_limits<double>::infinity()) {
+				print("is_parseable ERROR: The prior is not monotonic after inverting semantic transformation function '", stderr);
+				print(syntax.right.nt.transformations[i], stderr); print("' to obtain logical form set ", stderr);
+				print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+				print(syntax.right, stderr, printers); print('\n', stderr);
+				return false;
+			}
+			prior = new_prior;
+		}
+	} else {
+		bool found_correct_morphology = false;
+		auto emit_root = [&](const sequence& root, const sequence& inflected, const Semantics& new_logical_form_set)
+			{
+				if (found_correct_morphology) return true;
+
+				bool root_matches = (root.length == syntax.right.t.length);
+				for (unsigned int i = 0; root_matches && i < root.length; i++)
+					if (root[i] != syntax.right.t.terminals[i]) root_matches = false;
+
+				if (is_subset(logical_form, new_logical_form_set) && root_matches) {
+					Semantics temp = new_logical_form_set;
+					swap(logical_form_set, temp);
+					found_correct_morphology = true;
+				}
+				return true;
+			};
+
+		sequence sentence_tokens(nullptr, 0);
+		if (syntax.right.t.inflected == nullptr) {
+			sentence_tokens.tokens = syntax.right.t.terminals;
+			sentence_tokens.length = syntax.right.t.length;
+		} else {
+			sentence_tokens.tokens = syntax.right.t.inflected;
+			sentence_tokens.length = syntax.right.t.inflected_length;
+		}
+
+		if (!morphology_parse<IsFirst>(morphology_parser, sentence_tokens, G.nonterminals[nonterminal - 1].rule_distribution.get_part_of_speech(), logical_form_set, emit_root)) {
+			print("is_parseable ERROR: Morphological parsing failed with logical form set ", stderr);
+			print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+			print(syntax.right, stderr, printers); print('\n', stderr);
+			return false;
+		} else if (!found_correct_morphology) {
+			print("is_parseable ERROR: Unable to find correct morphological parse with logical form set ", stderr);
+			print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+			print(syntax.right, stderr, printers); print('\n', stderr);
+			return false;
+		}
+	}
+
+#if !defined(USE_NONTERMINAL_PREITERATOR)
+	if (!is_parseable(G.nonterminals[nonterminal - 1].rule_distribution,
+			syntax, logical_form, logical_form_set, printers, token_map))
+		return false;
+
+	double new_prior = log_probability<false>(logical_form_set);
+	if (new_prior > prior || new_prior == -std::numeric_limits<double>::infinity()) {
+		print("is_parseable ERROR: The prior is not monotonic after checking "
+				"parseability with the rule distribution to obtain logical form set ", stderr);
+		print(logical_form_set, stderr, printers.key); print(" at rule: ", stderr);
+		print(syntax.right, stderr, printers); print('\n', stderr);
+		return false;
+	}
+	prior = new_prior;
+#endif
+	return true;
+}
+
+template<typename Semantics, typename Distribution, typename Morphology,
+	typename NonterminalPrinter, typename TerminalPrinter>
+bool is_parseable(
+		syntax_node<Semantics>& syntax,
+		const Semantics& logical_form,
+		grammar<Semantics, Distribution>& G,
+		const Morphology& morphology_parser,
+		Semantics& logical_form_set,
+		NonterminalPrinter& nonterminal_printer,
+		TerminalPrinter& terminal_printer,
+		const string** token_map,
+		unsigned int nonterminal = 1)
+{
+	double prior = log_probability<false>(logical_form_set);
+	if (prior == -std::numeric_limits<double>::infinity()) {
+		fprintf(stderr, "is_parseable ERROR: The prior of the root logical form set is -inf: ");
+		print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
+		return false;
+	}
+
+	double true_prior = log_probability<true>(logical_form);
+	if (true_prior == -std::numeric_limits<double>::infinity()) {
+		fprintf(stderr, "is_parseable ERROR: The prior of the ground truth logical form is -inf: ");
+		print(logical_form, stderr, terminal_printer); print('\n', stderr);
+		return false;
+	}
+
+	auto printers = pair<TerminalPrinter&, NonterminalPrinter&>(terminal_printer, nonterminal_printer);
+	if (!is_parseable<true, Semantics, Distribution, Morphology, TerminalPrinter, NonterminalPrinter>(
+			syntax, logical_form, G, morphology_parser, logical_form_set, printers, token_map, prior, nonterminal))
+		return false;
+	if (!equivalent(logical_form, logical_form_set)) {
+		print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);
+		print("  Reference logical form: ", stderr); print(logical_form, stderr, terminal_printer); print('\n', stderr);
+		print("  Parsed logical form:    ", stderr); print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
+		return false;
+	}
 	return true;
 }
 

@@ -104,7 +104,7 @@ inline unsigned int get_rule_id(
 		}
 		return id;
 	} else {
-		return rule.nonterminals[0] * distribution.nonterminal_count + rule.nonterminals[1];
+		return rule.nt.nonterminals[0] * distribution.nonterminal_count + rule.nt.nonterminals[1];
 	}
 }
 
@@ -149,7 +149,7 @@ array<weighted_feature_set<double>>* log_conditional(
 	list->length = 1;
 	if (observation.is_terminal()) {
 		/* every preterminal is assigned to a single terminal */
-		if (observation.length > 1
+		if (observation.t.length > 1
 		|| get_rule_id(distribution, observation) != distribution.rules.counts.keys[0]) {
 			free(list->data[0]);
 			list->length = 0;
@@ -207,17 +207,18 @@ bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution,
 			if (log_conditional + 1.0e-9 > log_min_probability) {
 				if (!rules.ensure_capacity(rules.length + 1)) return false;
 				rule<Semantics>& new_rule = rules[(unsigned int) rules.length];
-				new_rule.length = 2;
-				new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
-				new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
-				new_rule.transformations[0].function_count = 1;
-				new_rule.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[0].function_count);
-				new_rule.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
-				new_rule.transformations[1].function_count = 1;
-				new_rule.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[1].function_count);
-				new_rule.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
-				new_rule.nonterminals[0] = i + 1;
-				new_rule.nonterminals[1] = j + 1;
+				new_rule.type = rule_type::NONTERMINAL;
+				new_rule.nt.length = 2;
+				new_rule.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.nt.length);
+				new_rule.nt.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.nt.length);
+				new_rule.nt.transformations[0].function_count = 1;
+				new_rule.nt.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.nt.transformations[0].function_count);
+				new_rule.nt.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+				new_rule.nt.transformations[1].function_count = 1;
+				new_rule.nt.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.nt.transformations[1].function_count);
+				new_rule.nt.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
+				new_rule.nt.nonterminals[0] = i + 1;
+				new_rule.nt.nonterminals[1] = j + 1;
 				rules.length++;
 			}
 		}
@@ -235,17 +236,18 @@ bool get_rules(const conjugate_pair<BaseDistribution, Likelihood>& distribution,
 		for (unsigned int j = 0; j < distribution.nonterminal_count; j++) {
 			if (!rules.ensure_capacity(rules.length + 1)) return false;
 			rule<Semantics>& new_rule = rules[(unsigned int) rules.length];
-			new_rule.length = 2;
-			new_rule.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.length);
-			new_rule.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.length);
-			new_rule.transformations[0].function_count = 1;
-			new_rule.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[0].function_count);
-			new_rule.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
-			new_rule.transformations[1].function_count = 1;
-			new_rule.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.transformations[1].function_count);
-			new_rule.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
-			new_rule.nonterminals[0] = i + 1;
-			new_rule.nonterminals[1] = j + 1;
+			new_rule.type = rule_type::NONTERMINAL;
+			new_rule.nt.length = 2;
+			new_rule.nt.nonterminals = (unsigned int*) malloc(sizeof(unsigned int) * new_rule.nt.length);
+			new_rule.nt.transformations = (transformation<Semantics>*) malloc(sizeof(transformation<Semantics>) * new_rule.nt.length);
+			new_rule.nt.transformations[0].function_count = 1;
+			new_rule.nt.transformations[0].functions = (function_type*) malloc(sizeof(function_type) * new_rule.nt.transformations[0].function_count);
+			new_rule.nt.transformations[0].functions[0] = null_semantics::FUNCTION_IDENTITY;
+			new_rule.nt.transformations[1].function_count = 1;
+			new_rule.nt.transformations[1].functions = (function_type*) malloc(sizeof(function_type) * new_rule.nt.transformations[1].function_count);
+			new_rule.nt.transformations[1].functions[0] = null_semantics::FUNCTION_IDENTITY;
+			new_rule.nt.nonterminals[0] = i + 1;
+			new_rule.nt.nonterminals[1] = j + 1;
 			rules.length++;
 		}
 	}
