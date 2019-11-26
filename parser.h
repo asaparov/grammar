@@ -3318,14 +3318,6 @@ bool process_rule_state(
 		position.end = state.positions[state.rule_position + 1];
 	}
 
-const rule<Semantics>& r = state.syntax.get_rule();
-if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("NOMINAL_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("N") && position.start == 0 && position.end == 1)
-fprintf(stderr, "DEBUG: BREAKPOINT\n");
-if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("VP_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("V") && position.start == 1 && position.end == 2)
-fprintf(stderr, "DEBUG: BREAKPOINT\n");
-if (Mode == MODE_SAMPLE && state.nonterminal == G.nonterminal_names.get("NOMINAL_L") && r.type == rule_type::NONTERMINAL && r.nt.length == 1 && r.nt.nonterminals[0] == G.nonterminal_names.get("N") && position.start == 2 && position.end == 3)
-fprintf(stderr, "DEBUG: BREAKPOINT\n");
-
 	/* apply the semantic transformation paired with the next nonterminal */
 	Semantics& expanded_logical_forms = *((Semantics*) alloca(sizeof(Semantics)));
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)

@@ -1938,7 +1938,7 @@ bool is_parseable(
 				for (unsigned int i = 0; root_matches && i < root.length; i++)
 					if (root[i] != syntax.right.t.terminals[i]) root_matches = false;
 
-				if (is_subset(logical_form, new_logical_form_set) && root_matches) {
+				if (root_matches && is_subset(logical_form, new_logical_form_set)) {
 					Semantics temp = new_logical_form_set;
 					swap(logical_form_set, temp);
 					found_correct_morphology = true;
