@@ -908,9 +908,16 @@ bool add(
 	const rule<Semantics>& r, const Semantics& logical_form)
 {
 	feature_set set = feature_set(distribution.feature_count);
-	return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
-		&& distribution.observations.add(r)
-		&& add(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
+	/*if (r.is_terminal()) {
+		rule<Semantics> terminal_rule(sequence(r.t.terminals, r.t.length));
+		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
+			&& distribution.observations.add(terminal_rule)
+			&& add(distribution.sampler, set.features, set.feature_count, terminal_rule, distribution.hdp_cache);
+	} else {*/
+		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
+			&& distribution.observations.add(r)
+			&& add(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
+	//}
 }
 
 template<typename RulePrior, typename Semantics>
@@ -918,9 +925,16 @@ bool remove(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 	const rule<Semantics>& r, const Semantics& logical_form)
 {
 	feature_set set = feature_set(distribution.feature_count);
-	return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
-		&& distribution.observations.subtract(r) < distribution.observations.counts.size
-		&& remove(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
+	/*if (r.is_terminal()) {
+		rule<Semantics> terminal_rule(sequence(r.t.terminals, r.t.length));
+		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
+			&& distribution.observations.subtract(terminal_rule) < distribution.observations.counts.size
+			&& remove(distribution.sampler, set.features, set.feature_count, terminal_rule, distribution.hdp_cache);
+	} else {*/
+		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
+			&& distribution.observations.subtract(r) < distribution.observations.counts.size
+			&& remove(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
+	//}
 }
 
 template<typename RulePrior, typename Semantics>

@@ -2079,6 +2079,7 @@ void right_probability(
 	if (IgnoreNext) {
 		right_prior = old_prior;
 		if (rule_position == r.nt.length) {
+			free(next_logical_form);
 			right = right_prior;
 			return;
 		}
@@ -3326,6 +3327,8 @@ bool process_rule_state(
 	{
 		return false;
 	}
+	if (Mode == MODE_COMPUTE_BOUNDS)
+		initialize_any(expanded_logical_forms);
 
 	unsigned int next_nonterminal = state.syntax.get_rule().nt.nonterminals[state.rule_position];
 	cell_list<Mode, Semantics>& cells = parse_chart.get_cells(next_nonterminal, position);
@@ -3333,8 +3336,7 @@ bool process_rule_state(
 		/* the next token is a subtree */
 		double log_probability = sentence.subtree_probability(
 				G, next_nonterminal, expanded_logical_forms, position.start);
-		if (Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
-			free(expanded_logical_forms);
+		free(expanded_logical_forms);
 		if (is_negative_inf(log_probability))
 			return true;
 		return complete_invert_state<AllowAmbiguous>(
@@ -3352,8 +3354,7 @@ bool process_rule_state(
 					cell, state, logical_form_set, position, prior);
 		};
 	bool result = cells.expand_cells(expanded_logical_forms, expand_cell);
-	if (Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
-		free(expanded_logical_forms);
+	free(expanded_logical_forms);
 	return result;
 }
 

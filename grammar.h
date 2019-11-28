@@ -1418,12 +1418,15 @@ bool log_probability(double& score,
 
 	if (r.is_terminal()) return true;
 	for (unsigned int i = 0; i < r.nt.length; i++) {
-		Semantics transformed;
+		Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
 		if (syntax.children[i] == NULL) continue;
-		if (!apply(r.nt.transformations[i], logical_form, transformed))
+		if (!apply(r.nt.transformations[i], logical_form, transformed)) {
 			return false;
-		else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nt.nonterminals[i]))
+		} else if (!log_probability(score, G, *syntax.children[i], transformed, token_map, r.nt.nonterminals[i])) {
+			free(transformed);
 			return false;
+		}
+		free(transformed);
 	}
 	return true;
 }
