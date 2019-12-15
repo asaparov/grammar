@@ -194,10 +194,7 @@ inline bool invert(
 		for (unsigned int j = 0; j < old_inverse.length; j++) {
 			Semantics* next_inverse; unsigned int next_inverse_count;
 			if (!invert(next_inverse, next_inverse_count, t.functions[i - 1], outputs[i - 1], old_inverse[j])) {
-				for (unsigned int k = 0; k < new_inverse.length; k++) free(new_inverse[k]);
-				for (unsigned int k = 0; k < old_inverse.length; k++) free(old_inverse[k]);
-				for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
-				free(outputs); free(old_inverse); return false;
+				continue;
 			} else if (!new_inverse.ensure_capacity(new_inverse.length + next_inverse_count)) {
 				for (unsigned int k = 0; k < new_inverse.length; k++) free(new_inverse[k]);
 				for (unsigned int k = 0; k < old_inverse.length; k++) free(old_inverse[k]);
@@ -218,6 +215,11 @@ inline bool invert(
 
 	for (unsigned int k = 0; k < t.function_count; k++) free(outputs[k]);
 	free(outputs);
+	if (old_inverse.length == 0) {
+		free(old_inverse);
+		return false;
+	}
+
 	resize(old_inverse.data, old_inverse.length);
 	inverse = old_inverse.data;
 	inverse_count = old_inverse.length;
@@ -1699,6 +1701,8 @@ struct null_semantics {
 	static inline void free(const null_semantics& logical_form) { }
 };
 
+constexpr inline bool initialize_any(const null_semantics& lf) { return true; }
+
 constexpr bool operator == (const null_semantics& first, const null_semantics& second) {
 	return true;
 }
@@ -1781,7 +1785,7 @@ inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const null_semantics& logical_form, EmitRootFunction emit_root)
 {
-	return emit_root(words, {nullptr, 0}, logical_form);
+	return emit_root(words, logical_form);
 }
 
 template<typename PartOfSpeechType>
@@ -1933,7 +1937,7 @@ bool is_parseable(
 		}
 	} else {
 		bool found_correct_morphology = false;
-		auto emit_root = [&](const sequence& root, const sequence& inflected, const Semantics& new_logical_form_set)
+		auto emit_root = [&](const sequence& root, const Semantics& new_logical_form_set)
 			{
 				if (found_correct_morphology) return true;
 

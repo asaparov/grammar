@@ -35,6 +35,7 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 string_map_scribe* debug_terminal_printer;
 string_map_scribe* debug_nonterminal_printer;
 bool debug_flag = false;
+bool detect_duplicate_logical_forms = false;
 
 thread_local double minimum_priority = 0.0;
 
@@ -621,8 +622,7 @@ inline bool print(
 		&& (Mode == MODE_COMPUTE_BOUNDS || (print('\n', out) && print_indent(indent, out) && print("logical_form: ", out) && print(state.logical_form_set, out, terminal_printer)))
 		&& print('\n', out) && print_indent(indent, out) && print("log_probability: ", out) && print(state.log_probability, out, PRINT_PROBABILITY_PRECISION)
 		&& print('\n', out) && print_indent(indent, out) && print("rule_position: ", out) && print(state.rule_position, out)
-		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.length, out)))
-		&& print('\n', out);
+		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.nt.length, out)));
 }
 
 template<parse_mode Mode, typename Semantics, typename Stream,
@@ -638,6 +638,10 @@ struct nonterminal_state {
 	syntax_state<Mode, Semantics> syntax;
 	Semantics logical_form_set; /* TODO: the logical form is unnecessary in syntactic parsing */
 	unsigned int* positions;
+
+#if !defined(NDEBUG)
+	unsigned int iteration;
+#endif
 
 	static inline void free(nonterminal_state<Mode, Semantics>& state) {
 		core::free(state.syntax);
@@ -768,13 +772,12 @@ inline bool print(const nonterminal_iterator_state<Mode, Semantics>& state, Stre
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer)
 {
 	const rule<Semantics>& r = state.syntax.get_rule();
-	unsigned int length = r.is_terminal() ? 2 : (r.length + 1);
+	unsigned int length = r.is_terminal() ? 2 : (r.nt.length + 1);
 	return print("nonterminal = ", out) && print(state.nonterminal, out, nonterminal_printer)
 		&& print("\nnext logical form: ", out) && print(state.posterior[state.iterator].object, out, terminal_printer)
 		&& print("\nnext log probability: ", out) && print(state.posterior[state.iterator].log_probability, out, PRINT_PROBABILITY_PRECISION)
 		&& print("\nsyntax: ", out) && print(state.syntax, out, nonterminal_printer, terminal_printer)
-		&& (Mode == MODE_GENERATE || (print("\npositions: ", out) && print(state.positions, length, out)))
-		&& print('\n', out);
+		&& (Mode == MODE_GENERATE || (print("\npositions: ", out) && print(state.positions, length, out)));
 }
 
 template<parse_mode Mode, typename Semantics>
@@ -921,6 +924,10 @@ struct parser_search_state {
 		rule_completer_state<Mode, Semantics>* rule_completer;
 	};
 
+#if !defined(NDEBUG)
+	unsigned int iteration;
+#endif
+
 	inline double get_priority() const {
 		return priority;
 	}
@@ -954,6 +961,15 @@ inline bool operator < (
 	return (first.phase == PHASE_RULE_COMPLETER && second.phase != PHASE_RULE_COMPLETER);
 }
 
+template<parse_mode Mode, typename Semantics, typename Stream>
+inline bool print_iteration(const parser_search_state<Mode, Semantics>& state, Stream& out)
+{
+#if !defined(NDEBUG)
+	fprintf(stderr, "\n(created on iteration %u)", state.iteration);
+#endif
+	return true;
+}
+
 template<parse_mode Mode, typename Semantics, typename Stream,
 	typename NonterminalPrinter, typename TerminalPrinter>
 inline bool print(const parser_search_state<Mode, Semantics>& state, Stream& out,
@@ -961,15 +977,15 @@ inline bool print(const parser_search_state<Mode, Semantics>& state, Stream& out
 {
 	switch (state.phase) {
 	case PHASE_RULE:
-		return print("RULE STATE: ", out) && print(*state.rule, out, nonterminal_printer, terminal_printer);
+		return print("RULE STATE: ", out) && print(*state.rule, out, nonterminal_printer, terminal_printer) && print_iteration(state, out);
 	case PHASE_TERMINAL_ITERATOR:
-		return print("TERMINAL STATE: ", out) && print(*state.terminal_iterator, out, nonterminal_printer, terminal_printer);
+		return print("TERMINAL STATE: ", out) && print(*state.terminal_iterator, out, nonterminal_printer, terminal_printer) && print_iteration(state, out);
 	case PHASE_NONTERMINAL_ITERATOR:
-		return print("NONTERMINAL STATE: ", out) && print(*state.nonterminal_iterator, out, nonterminal_printer, terminal_printer);
+		return print("NONTERMINAL STATE: ", out) && print(*state.nonterminal_iterator, out, nonterminal_printer, terminal_printer) && print_iteration(state, out);
 	case PHASE_INVERT_ITERATOR:
-		return print("INVERT STATE: ", out) && print(*state.invert_iterator, out, nonterminal_printer, terminal_printer);
+		return print("INVERT STATE: ", out) && print(*state.invert_iterator, out, nonterminal_printer, terminal_printer) && print_iteration(state, out);
 	case PHASE_RULE_COMPLETER:
-		return print("RULE COMPLETER STATE: ", out) && print(*state.rule_completer, out, nonterminal_printer, terminal_printer);
+		return print("RULE COMPLETER STATE: ", out) && print(*state.rule_completer, out, nonterminal_printer, terminal_printer) && print_iteration(state, out);
 	}
 	fprintf(stderr, "print ERROR: Unrecognized search_phase.\n");
 	return false;
@@ -979,8 +995,9 @@ template<parse_mode Mode, typename Semantics>
 struct agenda<Mode, Semantics> {
 	std::multiset<parser_search_state<Mode, Semantics>> queue;
 	double last_priority;
+	unsigned int iteration;
 
-	agenda() : last_priority(std::numeric_limits<double>::infinity()) { }
+	agenda() : last_priority(std::numeric_limits<double>::infinity()), iteration(0) { }
 
 	~agenda() {
 		for (parser_search_state<Mode, Semantics> state : queue)
@@ -999,6 +1016,9 @@ struct agenda<Mode, Semantics> {
 			parser_search_state<Mode, Semantics>& new_state,
 			cell_value<Mode, Semantics>& cell)
 	{
+#if !defined(NDEBUG)
+		new_state.iteration = iteration;
+#endif
 		queue.insert(new_state);
 	}
 
@@ -1008,7 +1028,7 @@ struct agenda<Mode, Semantics> {
 		queue.erase(last);
 
 //#if !defined(NDEBUG)
-		if (Mode == MODE_GENERATE && state.priority > last_priority + 1.0e-12)
+		if (Mode != MODE_SAMPLE && state.priority > last_priority + 1.0e-12)
 			fprintf(stderr, "%sparse WARNING: Search is not monotonic. (iteration %u)\n", parser_prefix, iteration);
 		last_priority = state.priority;
 //#endif
@@ -1472,6 +1492,9 @@ struct cell_value {
 				free(dst);
 				return false;
 			}
+#if !defined(NDEBUG)
+			dst.completed[dst.completed.length].iteration = nonterminal.iteration;
+#endif
 			dst.completed.length++;
 		}
 		return true;
@@ -2572,21 +2595,6 @@ inline bool complete_nonterminal(
 	unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
 	unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[rule.is_terminal() ? 1 : rule.nt.length];
 
-
-/*if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("N_PREDICATE") && start == 3 && end == 4) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("NP_N") && start == 3 && end == 4) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("NP_ADJ") && start == 3 && end == 4) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("NP") && start == 3 && end == 4) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("NP") && start == 3 && end == 6) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-} if (Mode == MODE_SAMPLE && nonterminal_id == G.nonterminal_names.get("THE") && start == 2 && end == 3) {
-print(logical_form_set, stderr, *debug_terminal_printer); fprintf(stderr, "DEBUG: BREAKPOINT\n");
-}*/
-
 if (Mode == MODE_PARSE && debug_flag) {
 check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood, parse_chart.token_map);
 }
@@ -2626,6 +2634,25 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood
 		}
 	}
 
+if (Mode == MODE_PARSE && detect_duplicate_logical_forms) {
+for (const nonterminal_state<Mode, Semantics>& state : completed_cell.completed) {
+	if (state.logical_form_set == logical_form_set) {
+		fprintf(stderr, "compute_nonterminal WARNING: Detected duplicate logical form in chart cell:\n");
+		print(logical_form_set, stderr, *debug_terminal_printer); print('\n', stderr);
+#if !defined(NDEBUG)
+		fprintf(stderr, "(the duplicate logical form was completed on iteration %u)\n", state.iteration);
+#endif
+
+const string** nonterminal_name_map = invert(G.nonterminal_names);
+string_map_scribe nonterminal_printer = { nonterminal_name_map, G.nonterminal_names.table.size + 1 };
+print(state.syntax.get_tree(), stderr, nonterminal_printer, *debug_terminal_printer, nonterminal_id); print('\n', stderr);
+print(syntax.get_tree(), stderr, nonterminal_printer, *debug_terminal_printer, nonterminal_id); print('\n', stderr);
+free(nonterminal_name_map);
+exit(EXIT_FAILURE);
+	}
+}
+}
+
 	/* add the completed nonterminal to the appropriate chart cell */
 	if (!completed_cell.completed.ensure_capacity(completed_cell.completed.length + 1))
 		return false;
@@ -2633,6 +2660,9 @@ check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood
 		completed_cell.completed[(unsigned int) completed_cell.completed.length];
 	if (!init(new_nonterminal, syntax, positions, logical_form_set, log_likelihood))
 		return false;
+#if !defined(NDEBUG)
+	new_nonterminal.iteration = queue.iteration;
+#endif
 	completed_cell.completed.length++;
 
 	/* create an iterator to complete any waiting rule states with this new nonterminal */
@@ -2762,15 +2792,15 @@ inline bool push_nonterminal_iterator(
 			return true;
 		};
 
-	auto emit_root = [&](const sequence& terminal, const sequence& inflected, const Semantics& logical_form_set)
+	auto emit_root = [&](const sequence& terminal, const Semantics& logical_form_set)
 		{
 			rule<Semantics>& terminal_rule = *((rule<Semantics>*) alloca(sizeof(rule<Semantics>)));
 			syntax_state<Mode, Semantics>& new_syntax = *((syntax_state<Mode, Semantics>*) alloca(sizeof(syntax_state<Mode, Semantics>)));
 			terminal_rule.type = rule_type::TERMINAL;
 			terminal_rule.t.terminals = terminal.tokens;
 			terminal_rule.t.length = terminal.length;
-			terminal_rule.t.inflected = inflected.tokens;
-			terminal_rule.t.inflected_length = inflected.length;
+			terminal_rule.t.inflected = nullptr;
+			terminal_rule.t.inflected_length = 0;
 			if (!init(new_syntax, terminal_rule)
 			 || !push_iterator(terminal_rule, new_syntax, logical_form_set)) {
 				free(new_syntax);
@@ -3746,15 +3776,20 @@ parse_result parse(
 	double best_derivation_probabilities[K];
 	for (unsigned int i = 0; i < K; i++)
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
-	for (unsigned int iteration = 0; !queue.is_empty(); iteration++)
+	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && iteration == 6380 - 1)
+/*if (Mode == MODE_PARSE && queue.iteration == 164)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
-		parser_search_state<Mode, Semantics> state = queue.pop(iteration);
+		parser_search_state<Mode, Semantics> state = queue.pop(queue.iteration);
 		last_log_priority = log(queue.priority(root_cell));
 
+/*if (Mode == MODE_PARSE) {
+default_scribe scribe;
+print("[ITERATION ", stderr); print(queue.iteration, stderr); print("] ", stderr);
+print(state, stderr, scribe, *debug_terminal_printer); print("\n\n", stderr);
+}*/
 		bool cleanup = true;
 		switch (state.phase) {
 		case PHASE_RULE:
@@ -3792,7 +3827,7 @@ fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 			if (root_cell.template has_completed_parses<AllowAmbiguous>(
 					last_log_priority, completed_derivations, best_derivation_probabilities)) {
-				if (!Quiet) printf("%sTerminating search after visiting %u states.\n", parser_prefix, iteration);
+				if (!Quiet) printf("%sTerminating search after visiting %u states.\n", parser_prefix, queue.iteration);
 				break;
 			}
 		}

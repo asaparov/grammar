@@ -1618,7 +1618,7 @@ inline bool morphology_parse(
 		const dummy_morphology_parser& morph, const sequence& words, PartOfSpeechType pos,
 		const tree_semantics& logical_form, EmitRootFunction emit_root)
 {
-	return emit_root(words, {nullptr, 0}, logical_form);
+	return emit_root(words, logical_form);
 }
 
 template<typename PartOfSpeechType>

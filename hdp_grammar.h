@@ -908,16 +908,16 @@ bool add(
 	const rule<Semantics>& r, const Semantics& logical_form)
 {
 	feature_set set = feature_set(distribution.feature_count);
-	/*if (r.is_terminal()) {
+	if (r.is_terminal()) {
 		rule<Semantics> terminal_rule(sequence(r.t.terminals, r.t.length));
 		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
 			&& distribution.observations.add(terminal_rule)
 			&& add(distribution.sampler, set.features, set.feature_count, terminal_rule, distribution.hdp_cache);
-	} else {*/
+	} else {
 		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
 			&& distribution.observations.add(r)
 			&& add(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
-	//}
+	}
 }
 
 template<typename RulePrior, typename Semantics>
@@ -925,16 +925,16 @@ bool remove(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 	const rule<Semantics>& r, const Semantics& logical_form)
 {
 	feature_set set = feature_set(distribution.feature_count);
-	/*if (r.is_terminal()) {
+	if (r.is_terminal()) {
 		rule<Semantics> terminal_rule(sequence(r.t.terminals, r.t.length));
 		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
 			&& distribution.observations.subtract(terminal_rule) < distribution.observations.counts.size
 			&& remove(distribution.sampler, set.features, set.feature_count, terminal_rule, distribution.hdp_cache);
-	} else {*/
+	} else {
 		return get_features(set, logical_form, distribution.feature_sequence, distribution.feature_count)
 			&& distribution.observations.subtract(r) < distribution.observations.counts.size
 			&& remove(distribution.sampler, set.features, set.feature_count, r, distribution.hdp_cache);
-	//}
+	}
 }
 
 template<typename RulePrior, typename Semantics>
@@ -1601,6 +1601,12 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		free(logical_form_set);
 		logical_form_set = new_logical_form_set;
 		return true;
+	}
+
+	if (distribution.h.pi.probability(syntax.right) == 0.0) {
+		print("is_parseable ERROR: The following rule has zero prior probability: ", stderr);
+		print(syntax.right, stderr, printers); print('\n', stderr);
+		return false;
 	}
 
 	/* set the semantic features */
