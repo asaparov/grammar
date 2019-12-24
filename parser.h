@@ -127,11 +127,12 @@ struct tokenized_sentence
 
 	~tokenized_sentence() { free(); }
 
-	template<typename Distribution>
+	template<typename Distribution, typename StringMapType>
 	double subtree_probability(
 			grammar<Semantics, Distribution>& G,
 			unsigned int nonterminal,
 			const Semantics& logical_form,
+			const StringMapType& token_map,
 			unsigned int index)
 	{
 		if (!cache[index].check_size())
@@ -141,7 +142,7 @@ struct tokenized_sentence
 		double& probability = cache[index].get(node_label<Semantics>(nonterminal, logical_form), contains, bucket);
 		if (!contains) {
 			/* cache doesn't contain this entry, so compute and store it */
-			probability = log_probability(G, *tokens[index], logical_form, nonterminal);
+			probability = log_probability(G, *tokens[index], logical_form, token_map, nonterminal);
 			cache[index].table.keys[bucket] = {nonterminal, logical_form};
 			cache[index].table.size++;
 		}
@@ -301,7 +302,7 @@ enum parse_mode {
 /* forward declarations */
 
 template<parse_mode Mode, typename Semantics> struct cell_value;
-template<parse_mode Mode, typename Semantics> struct chart;
+template<parse_mode Mode, typename Semantics, typename StringMapType> struct chart;
 template<parse_mode Mode, typename Semantics, class Enable = void> struct agenda;
 
 struct span {
@@ -706,10 +707,10 @@ struct nonterminal_iterator_state
 	}
 };
 
-template<parse_mode Mode, typename Semantics>
+template<parse_mode Mode, typename Semantics, typename StringMapType>
 inline bool init(
 	nonterminal_iterator_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	unsigned int nonterminal, double inner_probability,
 	const syntax_state<Mode, Semantics>& syntax,
 	weighted<Semantics>* posterior,
@@ -1681,18 +1682,16 @@ inline bool init(cell_list<Mode, Semantics>& list)
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics>
+template<parse_mode Mode, typename Semantics, typename StringMapType>
 struct chart
 {
-	typedef typename std::conditional<Mode == MODE_GENERATE, hash_map<string, unsigned int>, const string**>::type string_map_type;
-
 	cell_list<Mode, Semantics>*** cells;
 	double** max_inner_probabilities;
 	unsigned int sentence_length;
 	unsigned int nonterminal_count;
-	string_map_type& token_map;
+	const StringMapType& token_map;
 
-	chart(unsigned int sentence_length, unsigned int nonterminal_count, string_map_type& token_map) :
+	chart(unsigned int sentence_length, unsigned int nonterminal_count, const StringMapType& token_map) :
 		sentence_length(sentence_length), nonterminal_count(nonterminal_count), token_map(token_map)
 	{
 		cells = (cell_list<Mode, Semantics>***) malloc(
@@ -1787,11 +1786,11 @@ struct chart
 
 template<bool AllowAmbiguous, parse_mode Mode,
 	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename StringMapType, typename Morphology>
 bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const Semantics& logical_form_set,
@@ -1827,9 +1826,9 @@ inline double inner_probability(
 	else return posterior.log_probability;
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 inline void inner_probability(
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	unsigned int nonterminal,
 	const Semantics& logical_form_set,
 	span position, double& inner,
@@ -1852,9 +1851,9 @@ inline void inner_probability(
 	}
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 inline void inner_probability(
-	chart<MODE_GENERATE, Semantics>& parse_chart,
+	chart<MODE_GENERATE, Semantics, StringMapType>& parse_chart,
 	unsigned int nonterminal,
 	const Semantics& logical_form_set,
 	span position, double& inner,
@@ -1869,10 +1868,10 @@ inline void inner_probability(
 	prior = 0.0; initial_prior = 0.0;
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 inline void initialize_message(
 	const rule<Semantics>& rule,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	const Semantics& next_logical_form,
 	unsigned int rule_position,
 	unsigned int start, unsigned int end,
@@ -1899,9 +1898,9 @@ inline void initialize_message(
 	}
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 inline void update_message_k(
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	const Semantics& next_logical_form,
 	unsigned int nonterminal,
 	unsigned int start, unsigned int end,
@@ -1938,9 +1937,9 @@ inline void update_message_k(
 	}
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 inline void update_message(const rule<Semantics>& rule,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	const Semantics& next_logical_form,
 	unsigned int rule_position,
 	unsigned int start, unsigned int end,
@@ -1955,11 +1954,11 @@ inline void update_message(const rule<Semantics>& rule,
 				right_priors, next_message, next_additive_priors, next_right_priors, k, is_separable);
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 void right_probability(const rule<Semantics>& r,
 	const Semantics& logical_form_set,
 	const unsigned int* positions,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 #if !defined(NDEBUG)
@@ -2029,11 +2028,11 @@ void right_probability(const rule<Semantics>& r,
 	free(right_priors); free(next_right_priors);
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 void right_probability(const rule<Semantics>& r,
 	const Semantics& logical_form_set,
 	const unsigned int* positions,
-	chart<MODE_GENERATE, Semantics>& parse_chart,
+	chart<MODE_GENERATE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 	right = 0.0;
@@ -2051,22 +2050,22 @@ void right_probability(const rule<Semantics>& r,
 	}
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 void right_probability(const rule<Semantics>& r,
 	const Semantics& logical_form_set,
 	const unsigned int* positions,
-	chart<MODE_COMPUTE_BOUNDS, Semantics>& parse_chart,
+	chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 	/* use a trivial bound in MODE_COMPUTE_BOUNDS */
 	right = 0.0;
 }
 
-template<typename Semantics>
+template<typename Semantics, typename StringMapType>
 void right_probability(const rule<Semantics>& r,
 	const Semantics& logical_form_set,
 	const unsigned int* positions,
-	chart<MODE_SAMPLE, Semantics>& parse_chart,
+	chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 	/* unreachable code */
@@ -2075,10 +2074,10 @@ void right_probability(const rule<Semantics>& r,
 	exit(EXIT_FAILURE);
 }
 
-template<bool IgnoreNext, typename Semantics>
+template<bool IgnoreNext, typename Semantics, typename StringMapType>
 void right_probability(
 	const rule_state<MODE_PARSE, Semantics>& rule,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 	unsigned int rule_position = rule.rule_position + 1;
@@ -2187,10 +2186,10 @@ void right_probability(
 	free(right_priors); free(next_right_priors);
 }
 
-template<bool IgnoreNext, typename Semantics>
+template<bool IgnoreNext, typename Semantics, typename StringMapType>
 void right_probability(
 	const rule_state<MODE_GENERATE, Semantics>& rule,
-	chart<MODE_GENERATE, Semantics>& parse_chart,
+	chart<MODE_GENERATE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
 	right = 0.0;
@@ -2212,20 +2211,20 @@ void right_probability(
 	right += right_prior;
 }
 
-template<bool IgnoreNext, typename Semantics>
+template<bool IgnoreNext, typename Semantics, typename StringMapType>
 inline void right_probability(
 	const rule_state<MODE_COMPUTE_BOUNDS, Semantics>& rule,
-	const chart<MODE_COMPUTE_BOUNDS, Semantics>& parse_chart,
+	const chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& prior)
 {
 	/* use a trivial bound in MODE_COMPUTE_BOUNDS */
 	right = 0.0;
 }
 
-template<bool IgnoreNext, typename Semantics, typename Distribution>
+template<bool IgnoreNext, typename Semantics, typename Distribution, typename StringMapType>
 inline void outer_probability(
 	const rule_state<MODE_SAMPLE, Semantics>& state,
-	const chart<MODE_SAMPLE, Semantics>& parse_chart,
+	const chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const nonterminal<Semantics, Distribution>& N,
 	double old_prior, double& outer, double& prior)
 {
@@ -2235,14 +2234,14 @@ inline void outer_probability(
 	exit(EXIT_FAILURE);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode != MODE_SAMPLE>::type* = nullptr>
 inline void outer_probability(
 	const rule<Semantics>& r,
 	const Semantics& logical_form_set,
 	const unsigned int* positions,
 	const cell_value<Mode, Semantics>& cell,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	NonterminalType& N, double old_prior,
 	double& outer, double& prior)
 {
@@ -2268,11 +2267,11 @@ inline void outer_probability(
 	outer += cell.var.get_outer_probability() - cell.prior_probability;
 }
 
-template<bool IgnoreNext, parse_mode Mode, typename Semantics, typename NonterminalType,
+template<bool IgnoreNext, parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode != MODE_SAMPLE>::type* = nullptr>
 inline void outer_probability(
 	const rule_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	NonterminalType& N, double old_prior,
 	double& outer, double& prior)
 {
@@ -2299,50 +2298,50 @@ inline void outer_probability(
 	outer += state.cell->var.get_outer_probability() - state.cell->prior_probability;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename StringMapType, typename Distribution>
 inline double compute_priority(
 	const rule_state<MODE_SAMPLE, Semantics>& state,
-	chart<MODE_SAMPLE, Semantics>& parse_chart,
+	chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	nonterminal<Semantics, Distribution>& N)
 {
 	return (double) state.positions[0] - state.positions[state.syntax.r.nt.length]
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename StringMapType, typename Distribution>
 inline double compute_priority(
 	const nonterminal_iterator_state<MODE_SAMPLE, Semantics>& state,
-	const chart<MODE_SAMPLE, Semantics>& parse_chart,
+	const chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const nonterminal<Semantics, Distribution>& N)
 {
 	return (double) state.positions[0] - state.positions[state.syntax.r.is_terminal() ? 1 : state.syntax.r.nt.length]
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename StringMapType, typename Distribution>
 inline double compute_priority(
 	const invert_iterator_state<MODE_SAMPLE, Semantics>& state,
-	const chart<MODE_SAMPLE, Semantics>& parse_chart,
+	const chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const nonterminal<Semantics, Distribution>& N)
 {
 	return (double) state.rule->positions[0] - state.rule->positions[state.rule->rule_position + 1]
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename StringMapType, typename Distribution>
 inline double compute_priority(
 	const rule_completer_state<MODE_SAMPLE, Semantics>& state,
-	const chart<MODE_SAMPLE, Semantics>& parse_chart,
+	const chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const nonterminal<Semantics, Distribution>& N)
 {
 	return (double) state.position.start - state.position.end
 		 + (double) (N.id + 1) / (parse_chart.nonterminal_count + 2);
 }
 
-template<typename Semantics, typename NonterminalType>
+template<typename Semantics, typename StringMapType, typename NonterminalType>
 inline double compute_priority(
 	const rule_state<MODE_COMPUTE_BOUNDS, Semantics>& state,
-	chart<MODE_COMPUTE_BOUNDS, Semantics>& parse_chart,
+	chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType>& parse_chart,
 	NonterminalType& N)
 {
 	double outer, prior;
@@ -2350,11 +2349,11 @@ inline double compute_priority(
 	return exp(state.log_probability + outer);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode == MODE_PARSE || Mode == MODE_GENERATE>::type* = nullptr>
 inline double compute_priority(
 	const rule_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	NonterminalType& N)
 {
 	Semantics& logical_form = *((Semantics*) alloca(sizeof(Semantics)));
@@ -2382,27 +2381,27 @@ inline double compute_priority(
 	return exp(state.log_probability - old_prior + inner + outer);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType>
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType>
 inline double compute_priority(const terminal_iterator_state<Mode, Semantics>& state,
-	const chart<Mode, Semantics>& parse_chart, const NonterminalType& N)
+	const chart<Mode, Semantics, StringMapType>& parse_chart, const NonterminalType& N)
 {
 	double outer = state.cell->var.get_outer_probability() - state.cell->prior_probability;
 	return exp(outer + state.terminals[state.iterator].log_probability);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode != MODE_SAMPLE>::type* = nullptr>
 inline double compute_priority(const nonterminal_iterator_state<Mode, Semantics>& state,
-	const chart<Mode, Semantics>& parse_chart, const NonterminalType& N)
+	const chart<Mode, Semantics, StringMapType>& parse_chart, const NonterminalType& N)
 {
 	double outer = state.cell->var.get_outer_probability() - state.cell->prior_probability;
 	return exp(outer + state.posterior[state.iterator].log_probability);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode != MODE_SAMPLE>::type* = nullptr>
 inline double compute_priority(const invert_iterator_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart, NonterminalType& N)
+	chart<Mode, Semantics, StringMapType>& parse_chart, NonterminalType& N)
 {
 	double outer, outer_prior, old_prior = 0.0;
 	if (Mode == MODE_PARSE)
@@ -2411,10 +2410,10 @@ inline double compute_priority(const invert_iterator_state<Mode, Semantics>& sta
 	return exp(state.log_probability + outer - old_prior);
 }
 
-template<parse_mode Mode, typename Semantics, typename NonterminalType,
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename NonterminalType,
 	typename std::enable_if<Mode != MODE_SAMPLE>::type* = nullptr>
 inline double compute_priority(const rule_completer_state<Mode, Semantics>& state,
-	chart<Mode, Semantics>& parse_chart, NonterminalType& N)
+	chart<Mode, Semantics, StringMapType>& parse_chart, NonterminalType& N)
 {
 	/* rule completer is not used during parsing, so we pass 0 as the old prior */
 	double outer, outer_prior;
@@ -2447,11 +2446,11 @@ inline double max_log_conditional(
 	exit(EXIT_FAILURE);
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution>
 inline bool push_rule_states(
 		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
-		chart<Mode, Semantics>& parse_chart,
+		chart<Mode, Semantics, StringMapType>& parse_chart,
 		unsigned int nonterminal, const rule<Semantics>& r,
 		const Semantics& logical_form_set,
 		cell_value<Mode, Semantics>& cell,
@@ -2503,11 +2502,11 @@ inline bool push_rule_states(
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution>
 bool push_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	rule_state<Mode, Semantics>& rule,
 	const Semantics& logical_form_set,
 	const syntax_state<Mode, Semantics>& syntax,
@@ -2578,11 +2577,11 @@ check_log_likelihood(G, *inverse, logical_form_set, parse_chart.token_map);
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution>
 inline bool complete_nonterminal(
 		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
-		chart<Mode, Semantics>& parse_chart,
+		chart<Mode, Semantics, StringMapType>& parse_chart,
 		const tokenized_sentence<Semantics>& sentence,
 		unsigned int nonterminal_id,
 		cell_value<Mode, Semantics>& completed_cell,
@@ -2701,11 +2700,11 @@ exit(EXIT_FAILURE);
 	return true;
 }
 
-template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution, typename Morphology>
+template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution, typename Morphology>
 inline bool push_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	unsigned int nonterminal,
@@ -2824,12 +2823,12 @@ inline bool push_nonterminal_iterator(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename Semantics, typename StringMapType,
+	typename Distribution, typename Morphology>
 inline bool push_terminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	Morphology& morphology_parser,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
@@ -2882,12 +2881,12 @@ inline bool push_terminal_iterator(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename Semantics, typename StringMapType,
+	typename Distribution, typename Morphology>
 bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const rule_state<Mode, Semantics>& completed_rule,
@@ -2963,12 +2962,12 @@ bool complete_invert_state(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename Semantics, typename StringMapType,
+	typename Distribution, typename Morphology>
 inline bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const invert_iterator_state<Mode, Semantics>& state)
@@ -2984,12 +2983,12 @@ inline bool complete_invert_state(
 }
 
 template<bool AllowAmbiguous, parse_mode Mode,
-	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename Semantics, typename StringMapType,
+	typename Distribution, typename Morphology>
 bool process_invert_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	invert_iterator_state<Mode, Semantics>& iterator,
@@ -3014,9 +3013,9 @@ bool process_invert_iterator(
 	return true;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution, typename Scribe>
+template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType, typename Scribe>
 bool check_invariants(
-		grammar<Semantics, Distribution>& G, chart<Mode, Semantics>& parse_chart,
+		grammar<Semantics, Distribution>& G, chart<Mode, Semantics, StringMapType>& parse_chart,
 		const rule_state<Mode, Semantics>& rule, const Semantics& child_logical_form,
 		const Semantics& new_logical_form, Scribe& scribe)
 {
@@ -3130,11 +3129,11 @@ inline void check_log_likelihood(
 	}
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
 bool process_rule_completer(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	rule_completer_state<Mode, Semantics>& completer,
 	bool& cleanup)
 {
@@ -3177,11 +3176,11 @@ inline void free_rules(array<rule<Semantics>>& rules) {
 
 template<bool AllowAmbiguous, parse_mode Mode,
 	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename StringMapType, typename Morphology>
 bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const Semantics& logical_form_set,
@@ -3228,11 +3227,11 @@ bool expand_nonterminal(
 
 template<bool AllowAmbiguous, parse_mode Mode,
 	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename StringMapType, typename Morphology>
 inline bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	cell_value<Mode, Semantics>& cell,
@@ -3331,11 +3330,11 @@ inline bool expand_nonterminal(
 
 template<bool AllowAmbiguous, parse_mode Mode,
 	typename Semantics, typename Distribution,
-	typename Morphology>
+	typename StringMapType, typename Morphology>
 bool process_rule_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	rule_state<Mode, Semantics>& state)
@@ -3365,7 +3364,7 @@ bool process_rule_state(
 	if (Mode != MODE_GENERATE && position.length() == 1 && !sentence.tokens[position.start]->is_terminal()) {
 		/* the next token is a subtree */
 		double log_probability = sentence.subtree_probability(
-				G, next_nonterminal, expanded_logical_forms, position.start);
+				G, next_nonterminal, expanded_logical_forms, parse_chart.token_map, position.start);
 		free(expanded_logical_forms);
 		if (is_negative_inf(log_probability))
 			return true;
@@ -3388,11 +3387,11 @@ bool process_rule_state(
 	return result;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool process_terminal_iterator(
 	agenda<MODE_GENERATE, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<MODE_GENERATE, Semantics>& parse_chart,
+	chart<MODE_GENERATE, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	terminal_iterator_state<MODE_GENERATE, Semantics>& iterator,
 	bool& cleanup)
@@ -3418,12 +3417,12 @@ bool process_terminal_iterator(
 			iterator.logical_form, inner_probability, NULL);
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution,
+template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType,
 	typename std::enable_if<Mode != MODE_GENERATE>::type* = nullptr>
 bool process_terminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	terminal_iterator_state<Mode, Semantics>& iterator,
 	bool& cleanup)
@@ -3432,11 +3431,11 @@ bool process_terminal_iterator(
 	return false;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution>
+template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
 bool process_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	nonterminal_iterator_state<Mode, Semantics>& iterator,
 	bool& cleanup)
@@ -3478,11 +3477,11 @@ bool process_nonterminal_iterator(
 }
 
 /* NOTE: this function assumes syntax.children is NULL */
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool sample(
 	grammar<Semantics, Distribution>& G,
 	syntax_node<Semantics>*& syntax,
-	chart<MODE_SAMPLE, Semantics>& parse_chart,
+	chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const cell_value<MODE_SAMPLE, Semantics>& cell,
 	const Semantics& logical_form,
 	const tokenized_sentence<Semantics>& sentence)
@@ -3579,11 +3578,11 @@ inline bool is_sorted(const cell_value<MODE_PARSE, Semantics>& cell, double& bes
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
 inline bool update_outer_probabilities(
 	agenda<MODE_PARSE, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
-	chart<MODE_PARSE, Semantics>& parse_chart,
+	chart<MODE_PARSE, Semantics, StringMapType>& parse_chart,
 	const tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const Semantics& logical_form,
@@ -3720,12 +3719,12 @@ return;*/
 }
 
 template<parse_mode Mode, typename Semantics,
-	typename Distribution, typename Morphology,
+	typename Distribution, typename StringMapType, typename Morphology,
 	typename std::enable_if<Mode != MODE_PARSE>::type* = nullptr>
 inline void update_outer_probabilities(
 		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
-		chart<Mode, Semantics>& parse_chart,
+		chart<Mode, Semantics, StringMapType>& parse_chart,
 		const tokenized_sentence<Semantics>& sentence,
 		const Morphology& morphology_parser,
 		const Semantics& logical_form,
@@ -3740,10 +3739,11 @@ enum parse_result {
 
 template<bool AllowAmbiguous, bool Quiet, unsigned int K = 1,
 		parse_mode Mode, typename Semantics,
-		typename Distribution, typename Morphology>
+		typename Distribution, typename StringMapType,
+		typename Morphology>
 parse_result parse(
 	grammar<Semantics, Distribution>& G,
-	chart<Mode, Semantics>& parse_chart,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
@@ -3778,7 +3778,7 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 164)
+/*if (Mode == MODE_PARSE && queue.iteration == 144)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
@@ -3848,11 +3848,11 @@ print(state, stderr, scribe, *debug_terminal_printer); print("\n\n", stderr);
 	return result;
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
 inline bool sample(
 	syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
-	chart<MODE_SAMPLE, Semantics>& parse_chart,
+	chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
 	Morphology& morphology_parser)
@@ -3871,11 +3871,11 @@ inline bool sample(
 	return result;
 }
 
-template<typename Semantics, typename Distribution>
+template<typename Semantics, typename Distribution, typename StringMapType>
 bool sample_chart(unsigned int nonterminal_id,
 	const syntax_node<Semantics>& syntax,
 	grammar<Semantics, Distribution>& G,
-	chart<MODE_SAMPLE, Semantics>& parse_chart,
+	chart<MODE_SAMPLE, Semantics, StringMapType>& parse_chart,
 	const Semantics& logical_form,
 	unsigned int start, unsigned int& end)
 {
@@ -3922,17 +3922,18 @@ bool sample_chart(unsigned int nonterminal_id,
 	return cells.expand_cells(logical_form, init_slice_variable);
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution,
+	typename Morphology, typename StringMapType>
 inline bool sample(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
-	const string** token_map,
+	const StringMapType& token_map,
 	unsigned int nonterminal = 1)
 {
 	/* perform block sampling */
-	chart<MODE_SAMPLE, Semantics> parse_chart = chart<MODE_SAMPLE, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_SAMPLE, Semantics, StringMapType> parse_chart = chart<MODE_SAMPLE, Semantics, StringMapType>(sentence.length, G.nonterminals.length, token_map);
 	if (!sample(syntax, G, parse_chart, logical_form, sentence, morphology_parser))
 		return false;
 
@@ -3940,13 +3941,13 @@ inline bool sample(syntax_node<Semantics>*& syntax,
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution, typename Morphology, typename StringMapType>
 bool resample(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
-	const string** token_map,
+	const StringMapType& token_map,
 	unsigned int nonterminal = 1)
 {
 	/* compute the (fully factorized) probability of the old tree */
@@ -3955,7 +3956,7 @@ bool resample(syntax_node<Semantics>*& syntax,
 	double old_probability = 0.0, new_probability = 0.0;
 	if (!remove_tree(nonterminal, *syntax, logical_form, G, token_map, old_probability)) return false;
 	double old_factored_probability = log_probability(G, *syntax, logical_form, token_map);
-	chart<MODE_SAMPLE, Semantics> parse_chart = chart<MODE_SAMPLE, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_SAMPLE, Semantics, StringMapType> parse_chart = chart<MODE_SAMPLE, Semantics, StringMapType>(sentence.length, G.nonterminals.length, token_map);
 
 	/* sample the slice variables for the occupied cells */
 	unsigned int end;
@@ -3986,7 +3987,7 @@ bool resample(syntax_node<Semantics>*& syntax,
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
 bool resample(syntax_node<Semantics>** syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics* logical_forms,
@@ -4001,7 +4002,7 @@ bool resample(syntax_node<Semantics>** syntax,
 	}
 
 	for (unsigned int i = 0; i < sentence_count; i++) {
-		chart<MODE_SAMPLE, Semantics> parse_chart = chart<MODE_SAMPLE, Semantics>(sentences[i].length, G.nonterminals.length);
+		chart<MODE_SAMPLE, Semantics, StringMapType> parse_chart = chart<MODE_SAMPLE, Semantics, StringMapType>(sentences[i].length, G.nonterminals.length);
 
 		/* sample the slice variables for the occupied cells */
 		unsigned int end;
@@ -4023,26 +4024,27 @@ bool resample(syntax_node<Semantics>** syntax,
 }
 
 template<bool AllowAmbiguous, typename Semantics,
-	typename Distribution, typename Morphology>
+	typename Distribution, typename Morphology,
+	typename StringMapType>
 bool reparse(syntax_node<Semantics>*& syntax,
 	grammar<Semantics, Distribution>& G,
 	const Semantics& logical_form,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
-	const string** token_map,
+	const StringMapType& token_map,
 	unsigned int nonterminal = 1)
 {
 	double old_probability = 0.0, new_probability = 0.0;
 	if (!remove_tree(nonterminal, *syntax, logical_form, G, old_probability)) return false;
 
 	/* first compute upper bounds on the inner probabilities */
-	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
-			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType> syntax_chart =
+			chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType>(sentence.length, G.nonterminals.length, token_map);
 	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form, sentence, morphology_parser) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
-	chart<MODE_PARSE, Semantics> parse_chart = chart<MODE_PARSE, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_PARSE, Semantics, StringMapType> parse_chart = chart<MODE_PARSE, Semantics, StringMapType>(sentence.length, G.nonterminals.length, token_map);
 
 	/* initialize the inner probabilities */
 	for (unsigned int i = 0; i < sentence.length + 1; i++) {
@@ -4389,7 +4391,8 @@ inline double compute_inner_probability(
 }
 
 template<bool AllowAmbiguous, bool Quiet, unsigned int K = 1,
-	typename Semantics, typename Distribution, typename Morphology>
+	typename Semantics, typename Distribution,
+	typename Morphology, typename StringMapType>
 bool parse(
 	syntax_node<Semantics>* syntax,
 	unsigned int& derivation_count,
@@ -4398,17 +4401,16 @@ bool parse(
 	grammar<Semantics, Distribution>& G,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
-	const string** token_map,
+	const StringMapType& token_map,
 	unsigned int time_limit = UINT_MAX)
 {
 	/* first compute upper bounds on the inner probabilities */
-	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
-			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType> syntax_chart(sentence.length, G.nonterminals.length, token_map);
 	if (parse<AllowAmbiguous, true>(G, syntax_chart, logical_form_input, sentence, morphology_parser, time_limit) != PARSE_SUCCESS)
 		return false;
 
 	/* construct the chart for the semantic parser */
-	chart<MODE_PARSE, Semantics> parse_chart = chart<MODE_PARSE, Semantics>(sentence.length, G.nonterminals.length, token_map);
+	chart<MODE_PARSE, Semantics, StringMapType> parse_chart(sentence.length, G.nonterminals.length, token_map);
 
 	/* initialize the inner probabilities */
 	for (unsigned int i = 0; i < sentence.length + 1; i++) {
@@ -4454,7 +4456,7 @@ bool generate(
 {
 	/* construct the chart for the semantic parser */
 	tokenized_sentence<Semantics> empty_sentence = tokenized_sentence<Semantics>(sequence(NULL, 0));
-	chart<MODE_GENERATE, Semantics> parse_chart = chart<MODE_GENERATE, Semantics>(0, G.nonterminals.length, token_map);
+	chart<MODE_GENERATE, Semantics, decltype(token_map)> parse_chart(0, G.nonterminals.length, token_map);
 	for (unsigned int k = 0; k < G.nonterminals.length; k++) {
 		cell_list<MODE_GENERATE, Semantics>& cells = parse_chart.get_cells(k + 1, {0, 0});
 		cells.set_inner_probability(0.0);
@@ -4504,15 +4506,16 @@ inline void free_queue(array<branch_and_bound_state<Semantics>>& queue) {
 	}
 }
 
-template<typename Semantics, typename Distribution, typename Morphology>
+template<typename Semantics, typename Distribution,
+	typename StringMapType, typename Morphology>
 inline bool bound(
 	double& upper_bound, const Semantics& set,
 	grammar<Semantics, Distribution>& G,
 	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser)
 {
-	chart<MODE_COMPUTE_BOUNDS, Semantics> syntax_chart =
-			chart<MODE_COMPUTE_BOUNDS, Semantics>(sentence.length, G.nonterminals.length);
+	chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType> syntax_chart =
+			chart<MODE_COMPUTE_BOUNDS, Semantics, StringMapType>(sentence.length, G.nonterminals.length);
 	if (!parse(G, syntax_chart, set, sentence, morphology_parser))
 		return false;
 
@@ -4560,7 +4563,7 @@ bool bound(array<Semantics*>& sets,
 }
 
 template<typename Semantics, typename Distribution,
-	typename Morphology, typename... Args>
+	typename StringMapType, typename Morphology, typename... Args>
 bool parse_branch_and_bound(
 	syntax_node<Semantics>& syntax,
 	Semantics& logical_form,
@@ -4620,7 +4623,7 @@ bool parse_branch_and_bound(
 		for (unsigned int i = 0; i < unambiguous_sets.length; i++)
 		{
 			/* construct the chart for the semantic parser */
-			chart<MODE_PARSE, Semantics> parse_chart = chart<MODE_PARSE, Semantics>(sentence.length, G.nonterminals.length);
+			chart<MODE_PARSE, Semantics, StringMapType> parse_chart = chart<MODE_PARSE, Semantics, StringMapType>(sentence.length, G.nonterminals.length);
 			for (unsigned int i = 0; i < sentence.length + 1; i++) {
 				for (unsigned int j = 0; j < sentence.length - i + 1; j++) {
 					for (unsigned int k = 0; k < G.nonterminals.length; k++) {

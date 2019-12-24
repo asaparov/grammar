@@ -280,7 +280,7 @@ int main(int argc, const char** argv)
 		for (unsigned int i = 0; i < sentence_count; i++) {
 			auto sentence = tokenized_sentence<tree_semantics>({
 				sentences[order[i]].data, (unsigned int) sentences[order[i]].length});
-			resample(syntax[order[i]], G, logical_forms[order[i]], sentence, dummy_morphology_parser(), NULL);
+			resample(syntax[order[i]], G, logical_forms[order[i]], sentence, dummy_morphology_parser(), (const string**) NULL);
 			//resample_locally(syntax[order[i]], G, logical_forms[order[i]], 2);
 			//printf("Reparsing sentence %u (ID: %u)\n", i, order[i]); fflush(stdout);
 			//reparse<false>(syntax[order[i]], G, logical_forms[order[i]], sentence, NULL);
@@ -319,15 +319,15 @@ int main(int argc, const char** argv)
 				auto sentence = tokenized_sentence<tree_semantics>({
 					sentences[sentence_id].data, (unsigned int) sentences[sentence_id].length});
 				unsigned int derivation_count;
-				if (parse<false, false>(&parsed_syntax, derivation_count, logical_form, &logical_form_output, G, sentence, dummy_morphology_parser(), NULL)) {
+				if (parse<false, false>(&parsed_syntax, derivation_count, logical_form, &logical_form_output, G, sentence, dummy_morphology_parser(), (const string**) NULL)) {
 					tree_semantics pruned_logical_form;
 					remove_wildcard_leaves(logical_form_output, pruned_logical_form);
 					print(pruned_logical_form, out, printer); print('\n', out);
 					print(parsed_syntax, out, nonterminal_printer, printer); print("\n", out);
 
 					printf("Parse log probability: %lf (sampled derivation has log probability %lf)\n",
-							log_probability(G, parsed_syntax, pruned_logical_form, NULL),
-							log_probability(G, *syntax[sentence_id], logical_forms[sentence_id], NULL));
+							log_probability(G, parsed_syntax, pruned_logical_form, (const string**) NULL),
+							log_probability(G, *syntax[sentence_id], logical_forms[sentence_id], (const string**) NULL));
 					printf("Parse prior probability: %lf (true derivation has prior probability %lf)\n",
 							log_probability<true>(pruned_logical_form),
 							log_probability<true>(logical_forms[sentence_id]));

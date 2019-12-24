@@ -1651,6 +1651,53 @@ inline int sample(
 	return 0;
 }
 
+template<typename Semantics>
+struct rooted_syntax_node {
+	unsigned int root;
+	syntax_node<Semantics>* tree;
+
+	rooted_syntax_node() : tree(nullptr) { }
+
+	~rooted_syntax_node() {
+		if (tree != nullptr) {
+			core::free(*tree);
+			if (tree->reference_count == 0)
+				core::free(tree);
+		}
+	}
+
+	inline void operator = (const rooted_syntax_node<Semantics>& src) {
+		root = src.root;
+		tree = src.tree;
+		tree->reference_count++;
+	}
+
+	static inline bool is_empty(const rooted_syntax_node<Semantics>& node) {
+		return node.tree == nullptr;
+	}
+
+	static inline void set_empty(rooted_syntax_node<Semantics>& node) {
+		node.tree = nullptr;
+	}
+
+	static inline unsigned int hash(const rooted_syntax_node<Semantics>& node) {
+		return default_hash(node.root) ^ syntax_node<Semantics>::hash(*node.tree);
+	}
+
+	static inline void free(rooted_syntax_node<Semantics>& node) {
+		core::free(*node.tree);
+		if (node.tree->reference_count == 0)
+			core::free(node.tree);
+	}
+};
+
+template<typename Semantics>
+inline bool operator == (const rooted_syntax_node<Semantics>& first, const rooted_syntax_node<Semantics>& second)
+{
+	return first.root == second.root
+		&& *first.tree == *second.tree;
+}
+
 struct null_semantics {
 	enum feature {
 		FEATURE_NULL
@@ -1799,7 +1846,8 @@ constexpr bool morphology_is_valid(
 
 template<bool IsFirst, typename Semantics,
 	typename Distribution, typename Morphology,
-	typename NonterminalPrinter, typename TerminalPrinter>
+	typename NonterminalPrinter, typename TerminalPrinter,
+	typename StringMapType>
 bool is_parseable(
 		const syntax_node<Semantics>& syntax,
 		const Semantics& logical_form,
@@ -1807,7 +1855,7 @@ bool is_parseable(
 		const Morphology& morphology_parser,
 		Semantics& logical_form_set,
 		pair<TerminalPrinter&, NonterminalPrinter&>& printers,
-		const string** token_map, double& prior,
+		const StringMapType& token_map, double& prior,
 		unsigned int nonterminal = 1)
 {
 #if defined(USE_NONTERMINAL_PREITERATOR)
@@ -1846,6 +1894,7 @@ bool is_parseable(
 			}
 
 			double child_prior = log_probability<false>(child_logical_form_set);
+
 			if (child_prior == -std::numeric_limits<double>::infinity()) {
 				print("is_parseable ERROR: The prior is -inf after applying semantic transformation function '", stderr);
 				print(syntax.right.nt.transformations[i], stderr); print("' to logical form set ", stderr);
@@ -1994,7 +2043,7 @@ bool is_parseable(
 }
 
 template<typename Semantics, typename Distribution, typename Morphology,
-	typename NonterminalPrinter, typename TerminalPrinter>
+	typename NonterminalPrinter, typename TerminalPrinter, typename StringMapType>
 bool is_parseable(
 		syntax_node<Semantics>& syntax,
 		const Semantics& logical_form,
@@ -2003,7 +2052,7 @@ bool is_parseable(
 		Semantics& logical_form_set,
 		NonterminalPrinter& nonterminal_printer,
 		TerminalPrinter& terminal_printer,
-		const string** token_map,
+		const StringMapType& token_map,
 		unsigned int nonterminal = 1)
 {
 	double prior = log_probability<false>(logical_form_set);
@@ -2021,7 +2070,7 @@ bool is_parseable(
 	}
 
 	auto printers = pair<TerminalPrinter&, NonterminalPrinter&>(terminal_printer, nonterminal_printer);
-	if (!is_parseable<true, Semantics, Distribution, Morphology, TerminalPrinter, NonterminalPrinter>(
+	if (!is_parseable<true, Semantics, Distribution, Morphology, TerminalPrinter, NonterminalPrinter, StringMapType>(
 			syntax, logical_form, G, morphology_parser, logical_form_set, printers, token_map, prior, nonterminal))
 		return false;
 	if (!equivalent(logical_form, logical_form_set)) {

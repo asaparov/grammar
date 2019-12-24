@@ -199,7 +199,7 @@ int main(int argc, const char** argv)
 		shuffle(order, sentence_count);
 		for (unsigned int i = 0; i < sentence_count; i++) {
 			auto sentence = tokenized_sentence<null_semantics>(sentences[order[i]]);
-			resample(syntax[order[i]], G, null_semantics(), sentence, dummy_morphology_parser(), NULL);
+			resample(syntax[order[i]], G, null_semantics(), sentence, dummy_morphology_parser(), (const string**) NULL);
 		}
 		/* TODO: cleanup the rule distributions (remove zeros) */
 	}

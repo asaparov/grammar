@@ -1498,4 +1498,14 @@ inline bool parse(Stream& in,
 	return true;
 }
 
+template<typename Stream, typename Semantics>
+inline bool parse(Stream& in,
+		rooted_syntax_node<Semantics>& derivation,
+		hash_map<string, unsigned int>& names,
+		const hash_map<string, unsigned int>& nonterminal_names,
+		position start = position(1, 1))
+{
+	return parse(in, derivation.tree, derivation.root, names, nonterminal_names, start);
+}
+
 #endif /* HDP_GRAMMAR_IO_H_ */

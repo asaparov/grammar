@@ -947,6 +947,7 @@ inline double log_probability(const hdp_rule_distribution<RulePrior, Semantics>&
 template<typename RulePrior, typename Semantics>
 inline void sample(hdp_rule_distribution<RulePrior, Semantics>& distribution)
 {
+	distribution.clear();
 	sample_alpha_each_level(distribution.sampler, distribution.a, distribution.b);
 	sample_hdp<true>(distribution.sampler, distribution.hdp_cache);
 }
@@ -1091,13 +1092,31 @@ inline const string& map_to_string(const string** map, unsigned int id) {
 	return *map[id];
 }
 
+template<typename Parser>
+inline const string& map_to_string(const Parser& parser, unsigned int id) {
+	return parser.map_to_string(id);
+}
+
 const string& map_to_string(const hash_map<string, unsigned int>& map, unsigned int id) {
 	fprintf(stderr, "map_to_string ERROR: This function can"
 			" only be called with an integer-to-string map.\n");
 	exit(EXIT_FAILURE);
 }
 
+constexpr bool parse_written_number(const string** map,
+		unsigned int* terminals, const unsigned int length, int& integer)
+{
+	return false;
+}
+
 bool get_token(const string& identifier, unsigned int& id, const string** map) {
+	fprintf(stderr, "get_token ERROR: This function can"
+			" only be called with a string-to-integer map.\n");
+	exit(EXIT_FAILURE);
+}
+
+template<typename Parser>
+bool get_token(const string& identifier, unsigned int& id, const Parser& parser) {
 	fprintf(stderr, "get_token ERROR: This function can"
 			" only be called with a string-to-integer map.\n");
 	exit(EXIT_FAILURE);
@@ -1108,12 +1127,17 @@ inline bool parse_number(const rule<Semantics>& observation,
 		const Semantics& src_logical_form, Semantics& dst_logical_form,
 		const StringMapType& token_map)
 {
-	int integer;
-	if (!observation.is_terminal() || observation.t.length != 1
-	 || !parse_int(map_to_string(token_map, observation.t.terminals[0]), integer)
-	 || !set_number(dst_logical_form, src_logical_form, integer))
+	if (!observation.is_terminal())
 		return false;
-	return true;
+
+	int integer;
+	if (observation.t.length == 1 && parse_int(map_to_string(token_map, observation.t.terminals[0]), integer)) {
+		return set_number(dst_logical_form, src_logical_form, integer);
+	} else if (parse_written_number(token_map, observation.t.terminals, observation.t.length, integer)) {
+		return set_number(dst_logical_form, src_logical_form, integer);
+	} else {
+		return false;
+	}
 }
 
 template<typename Semantics, typename StringMapType>
@@ -1523,12 +1547,12 @@ double max_log_conditional(
 	typedef typename hdp_rule_distribution<RulePrior, Semantics>::cache_value cache_value;
 
 	if (distribution.type == PRETERMINAL_NUMBER) {
-		Semantics dst_logical_form;
+		Semantics& dst_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!parse_number(observation, logical_form, dst_logical_form, token_map))
 			return -std::numeric_limits<double>::infinity();
 		free(dst_logical_form); return 0.0;
 	} else if (distribution.type == PRETERMINAL_STRING) {
-		Semantics dst_logical_form;
+		Semantics& dst_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!parse_string(observation, logical_form, dst_logical_form, token_map))
 			return -std::numeric_limits<double>::infinity();
 		free(dst_logical_form); return 0.0;
@@ -1574,32 +1598,33 @@ bool is_subset(
 }
 
 template<typename RulePrior, typename Semantics,
-	typename TerminalPrinter, typename NonterminalPrinter>
+	typename TerminalPrinter, typename NonterminalPrinter,
+	typename StringMapType>
 bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		const syntax_node<Semantics>& syntax,
 		const Semantics& logical_form, Semantics& logical_form_set,
 		pair<TerminalPrinter&, NonterminalPrinter&>& printers,
-		const string** token_map)
+		const StringMapType& token_map)
 {
 	if (distribution.type == PRETERMINAL_NUMBER) {
-		Semantics new_logical_form_set;
+		Semantics& new_logical_form_set = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!parse_number(syntax.right, logical_form_set, new_logical_form_set, token_map)) {
 			print("is_parseable ERROR: Unable to interpret number for preterminal_number at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
 		}
 		free(logical_form_set);
-		logical_form_set = new_logical_form_set;
+		move(new_logical_form_set, logical_form_set);
 		return true;
 	} else if (distribution.type == PRETERMINAL_STRING) {
-		Semantics new_logical_form_set;
+		Semantics& new_logical_form_set = *((Semantics*) alloca(sizeof(Semantics)));
 		if (!parse_string(syntax.right, logical_form_set, new_logical_form_set, token_map)) {
 			print("is_parseable ERROR: Unable to interpret string for preterminal_string at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
 		}
 		free(logical_form_set);
-		logical_form_set = new_logical_form_set;
+		move(new_logical_form_set, logical_form_set);
 		return true;
 	}
 
