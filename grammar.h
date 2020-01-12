@@ -1268,6 +1268,54 @@ bool print(const syntax_node<Semantics>& node, Stream& out,
 		&& print(node, out, 0, nonterminal_printer, terminal_printer) && print(')', out);
 }
 
+template<typename Semantics, typename Stream,
+	typename NonterminalPrinter, typename TerminalPrinter>
+bool print(const syntax_node<Semantics>& node, Stream& out, unsigned int indent,
+	NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer,
+	const Semantics& logical_form)
+{
+	bool success = true;
+	if (node.is_terminal()) {
+		success &= print(' ', out);
+		success &= print('\'', out);
+		success &= print(node.right.t.terminals[0], out, terminal_printer);
+		for (unsigned int i = 1; i < node.right.t.length; i++) {
+			success &= print(' ', out);
+			success &= print(node.right.t.terminals[i], out, terminal_printer);
+		}
+		success &= print('\'', out);
+	} else {
+		for (unsigned int i = 0; i < node.right.nt.length; i++) {
+			Semantics& transformed = *((Semantics*) alloca(sizeof(Semantics)));
+			if (!apply(node.right.nt.transformations[i], logical_form, transformed))
+				return false;
+			success &= print('\n', out) && print_indent(indent + 1, out);
+			success &= print('(', out) && print(node.right.nt.nonterminals[i], out, nonterminal_printer);
+			success &= print(':', out) && print(node.right.nt.transformations[i], out);
+			success &= print(" {", out) && print(transformed, out, terminal_printer) && print('}', out);
+			if (node.children[i] == NULL) {
+				success &= print(" <null>", out);
+			} else {
+				success &= print(*node.children[i], out, indent + 1, nonterminal_printer, terminal_printer, transformed);
+			}
+			success &= print(')', out);
+			free(transformed);
+		}
+	}
+	return success;
+}
+
+template<typename Semantics, typename Stream,
+	typename NonterminalPrinter, typename TerminalPrinter>
+bool print(const syntax_node<Semantics>& node, Stream& out,
+		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer,
+		const Semantics& logical_form, unsigned int root_nonterminal = 1)
+{
+	return print('(', out) && print(root_nonterminal, out, nonterminal_printer) && print(" {", out)
+		&& print(logical_form, out, terminal_printer) && print("} ", out)
+		&& print(node, out, 0, nonterminal_printer, terminal_printer, logical_form) && print(')', out);
+}
+
 template<typename Semantics, typename Stream, typename RuleReader>
 bool read(syntax_node<Semantics>& node, Stream& stream, RuleReader& reader) {
 	if (!read(node.right, stream, reader)) return false;
