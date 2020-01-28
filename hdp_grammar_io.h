@@ -897,11 +897,15 @@ bool read_transformation(const array<lexical_token<TokenType>>& tokens,
 	if (index < tokens.length && tokens[index].type == ColonToken) {
 		index++;
 		while (true) {
-			if (!functions.ensure_capacity(functions.length + 1))
+			if (!functions.ensure_capacity(functions.length + 1)) {
+				free(functions);
 				return false;
+			}
 
-			if (!expect_token(tokens, index, IdentifierToken, "semantic transformation function in right-hand side token"))
+			if (!expect_token(tokens, index, IdentifierToken, "semantic transformation function in right-hand side token")) {
+				free(functions);
 				return false;
+			}
 			const lexical_token<TokenType>& transform = tokens[index];
 			index++;
 
@@ -910,7 +914,7 @@ bool read_transformation(const array<lexical_token<TokenType>>& tokens,
 						transform.start.line, transform.start.column);
 				print(transform.text, stderr);
 				fprintf(stderr, "'.\n");
-				return false;
+				free(functions); return false;
 			}
 			functions.length++;
 
