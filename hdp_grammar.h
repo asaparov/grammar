@@ -1628,7 +1628,14 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		return true;
 	}
 
-	if (distribution.h.pi.probability(syntax.right) == 0.0) {
+	double prior_probability;
+	if (syntax.right.is_terminal()) {
+		rule<Semantics> terminal_rule(sequence(syntax.right.t.terminals, syntax.right.t.length));
+		prior_probability = distribution.h.pi.probability(terminal_rule);
+	} else {
+		prior_probability = distribution.h.pi.probability(syntax.right);
+	}
+	if (prior_probability == 0.0) {
 		print("is_parseable ERROR: The following rule has zero prior probability: ", stderr);
 		print(syntax.right, stderr, printers); print('\n', stderr);
 		return false;
