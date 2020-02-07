@@ -1988,7 +1988,7 @@ bool is_parseable(
 				print(syntax.right.nt.transformations[i], stderr); print("'.\n", stderr);
 				print("  True inverse: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
 				for (j = 0; j < inverse_count; j++) {
-					print("  inverse[", stderr); print(j, stderr); print("]: ", stderr); print(inverse[j], stderr, printers.key); print('\n', stderr);
+					print("  inverse[", stderr); print(j, stderr); print("]:   ", stderr); print(inverse[j], stderr, printers.key); print('\n', stderr);
 					free(inverse[j]);
 				}
 				free(inverse);

@@ -489,6 +489,10 @@ struct rule_state {
 	   set of freed rule states) */
 	unsigned int reference_count;
 
+#if !defined(NDEBUG)
+	unsigned int iteration;
+#endif
+
 	static inline void free(rule_state<Mode, Semantics>& state) {
 		state.reference_count--;
 		if (state.reference_count == 0) {
@@ -623,7 +627,12 @@ inline bool print(
 		&& (Mode == MODE_COMPUTE_BOUNDS || (print('\n', out) && print_indent(indent, out) && print("logical_form: ", out) && print(state.logical_form_set, out, terminal_printer)))
 		&& print('\n', out) && print_indent(indent, out) && print("log_probability: ", out) && print(state.log_probability, out, PRINT_PROBABILITY_PRECISION)
 		&& print('\n', out) && print_indent(indent, out) && print("rule_position: ", out) && print(state.rule_position, out)
-		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.nt.length, out)));
+		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.nt.length, out)))
+#if !defined(NDEBUG)
+		&& (state.iteration == 0 || (print('\n', out) && print_indent(indent, out) && print("(processed at iteration ", out) && print(state.iteration, out) && print(')', out)));
+#else
+		&& true;
+#endif
 }
 
 template<parse_mode Mode, typename Semantics, typename Stream,
@@ -2486,6 +2495,9 @@ inline bool push_rule_states(
 		new_rule->log_probability = rule_log_conditional;
 		if (Mode == MODE_PARSE)
 			new_rule->log_probability += min(log_probability<false>(logical_form_set), cell.prior_probability);
+#if !defined(NDEBUG)
+		new_rule->iteration = 0;
+#endif
 
 		double priority = compute_priority(*new_rule, parse_chart, N);
 		if (priority == 0.0) {
@@ -2926,6 +2938,9 @@ bool complete_invert_state(
 			new_rule->log_probability = inner_probability;
 			if (Mode != MODE_COMPUTE_BOUNDS)
 				new_rule->logical_form_set = logical_form;
+#if !defined(NDEBUG)
+			new_rule->iteration = 0;
+#endif
 
 			parser_search_state<Mode, Semantics> state;
 			state.rule = new_rule;
@@ -3339,6 +3354,10 @@ bool process_rule_state(
 	const Morphology& morphology_parser,
 	rule_state<Mode, Semantics>& state)
 {
+#if !defined(NDEBUG)
+	state.iteration = queue.iteration;
+#endif
+
 	/* get the start and end position for this nonterminal */
 	span position;
 	if (Mode == MODE_GENERATE) {
@@ -3778,7 +3797,7 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 144)
+/*if (Mode == MODE_PARSE && queue.iteration == 59)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
