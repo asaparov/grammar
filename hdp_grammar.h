@@ -944,6 +944,35 @@ inline double log_probability(const hdp_rule_distribution<RulePrior, Semantics>&
 		 + log_probability_each_level(distribution.sampler, distribution.a, distribution.b);
 }
 
+template<typename RulePrior, typename Semantics, typename StringMapType>
+inline double log_probability(
+	hdp_rule_distribution<RulePrior, Semantics>& distribution,
+	const rule<Semantics>& observation,
+	const Semantics& logical_form,
+	const StringMapType& token_map)
+{
+	unsigned int length;
+	weighted<Semantics>* posterior;
+	if (observation.is_terminal()) {
+		rule<Semantics> terminal_rule(sequence(observation.t.terminals, observation.t.length));
+		posterior = log_conditional<false, false>(distribution, terminal_rule, logical_form, token_map, length);
+	} else {
+		posterior = log_conditional<false, false>(distribution, observation, logical_form, token_map, length);
+	}
+
+	double weight;
+	if (length == 0)
+		weight = -std::numeric_limits<double>::infinity();
+	else weight = posterior[0].log_probability;
+
+	if (posterior != NULL) {
+		for (unsigned int i = 0; i < length; i++)
+			free(posterior[i]);
+		free(posterior);
+	}
+	return weight;
+}
+
 template<typename RulePrior, typename Semantics>
 inline void sample(hdp_rule_distribution<RulePrior, Semantics>& distribution)
 {

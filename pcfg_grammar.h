@@ -120,6 +120,29 @@ bool remove(conjugate_pair<BaseDistribution, Likelihood>& distribution, const ru
 	return distribution.rules.subtract(get_rule_id(distribution, rule)) < distribution.rules.counts.size;
 }
 
+template<typename BaseDistribution, typename Likelihood, typename Semantics, typename StringMapType>
+inline double log_probability(
+	conjugate_pair<BaseDistribution, Likelihood>& distribution,
+	const rule<Semantics>& observation,
+	const Semantics& logical_form,
+	const StringMapType& token_map)
+{
+	unsigned int length;
+	weighted<Semantics>* posterior = log_conditional<false, false>(distribution, observation, logical_form, token_map, length);
+
+	double weight;
+	if (length == 0)
+		weight = -std::numeric_limits<double>::infinity();
+	else weight = posterior[0].log_probability;
+
+	if (posterior != NULL) {
+		for (unsigned int i = 0; i < length; i++)
+			free(posterior[i]);
+		free(posterior);
+	}
+	return weight;
+}
+
 template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
 	typename BaseDistribution, typename Likelihood, typename Semantics>
 array<weighted_feature_set<double>>* log_conditional(

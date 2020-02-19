@@ -1429,32 +1429,6 @@ inline bool yield(const grammar<Semantics, Distribution>& G,
 }
 
 template<typename Semantics, typename Distribution, typename StringMapType>
-inline double log_probability(
-	grammar<Semantics, Distribution>& G,
-	const rule<Semantics>& observation,
-	const Semantics& logical_form,
-	const StringMapType& token_map,
-	unsigned int nonterminal_id)
-{
-	unsigned int length;
-	weighted<Semantics>* posterior = log_conditional<false, false>(
-			G.nonterminals[nonterminal_id - 1].rule_distribution,
-			observation, logical_form, token_map, length);
-
-	double weight;
-	if (length == 0)
-		weight = -std::numeric_limits<double>::infinity();
-	else weight = posterior[0].log_probability;
-
-	if (posterior != NULL) {
-		for (unsigned int i = 0; i < length; i++)
-			free(posterior[i]);
-		free(posterior);
-	}
-	return weight;
-}
-
-template<typename Semantics, typename Distribution, typename StringMapType>
 bool log_probability(double& score,
 	grammar<Semantics, Distribution>& G,
 	const syntax_node<Semantics>& syntax,
@@ -1463,7 +1437,7 @@ bool log_probability(double& score,
 	unsigned int nonterminal_id)
 {
 	const rule<Semantics>& r = syntax.right;
-	double rule_score = log_probability(G, r, logical_form, token_map, nonterminal_id);
+	double rule_score = log_probability(G.nonterminals[nonterminal_id - 1].rule_distribution, r, logical_form, token_map);
 	score += rule_score;
 
 	if (r.is_terminal()) return true;
@@ -1603,7 +1577,7 @@ bool add_tree(unsigned int nonterminal_id,
 	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
 
 	N.clear();
-	score += log_probability(G, syntax.right, logical_form, token_map, nonterminal_id);
+	score += log_probability(G.nonterminals[nonterminal_id - 1].rule_distribution, syntax.right, logical_form, token_map);
 	N.clear();
 	if (!add(N.rule_distribution, syntax.right, logical_form))
 		return false;
@@ -1633,7 +1607,7 @@ bool remove_tree(unsigned int nonterminal_id,
 	if (!remove(N.rule_distribution, syntax.right, logical_form))
 		return false;
 	N.clear();
-	score += log_probability(G, syntax.right, logical_form, token_map, nonterminal_id);
+	score += log_probability(G.nonterminals[nonterminal_id - 1].rule_distribution, syntax.right, logical_form, token_map);
 	N.clear();
 
 	if (syntax.is_terminal()) return true;
