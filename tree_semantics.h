@@ -1328,12 +1328,12 @@ inline bool any_string(const tree_semantics& src) {
 	return false;
 }
 
-inline bool get_string(const tree_semantics& src, sequence& value) {
+inline bool get_string(const tree_semantics& src, string& value) {
 	fprintf(stderr, "get_string ERROR: This is unimplemented for tree_semantics.\n");
 	return false;
 }
 
-inline bool set_string(tree_semantics& exp, const tree_semantics& set, const sequence& value) {
+inline bool set_string(tree_semantics& exp, const tree_semantics& set, const string& value) {
 	fprintf(stderr, "set_string ERROR: This is unimplemented for tree_semantics.\n");
 	return false;
 }

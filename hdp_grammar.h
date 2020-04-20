@@ -1174,8 +1174,65 @@ inline bool parse_string(const rule<Semantics>& observation,
 		const Semantics& src_logical_form, Semantics& dst_logical_form,
 		const StringMapType& token_map)
 {
-	return observation.is_terminal()
-		&& set_string(dst_logical_form, src_logical_form, {observation.t.terminals, observation.t.length});
+	if (!observation.is_terminal())
+		return false;
+
+	array<char> new_string(64);
+	for (unsigned int i = 0; i < observation.t.length; i++) {
+		const string& token = map_to_string(token_map, observation.t.terminals[i]);
+		if (!new_string.ensure_capacity(new_string.length + token.length + 1))
+			return false;
+		if (i != 0) new_string[new_string.length++] = ' ';
+		for (unsigned int j = 0; j < token.length; j++)
+			new_string[new_string.length++] = token[j];
+	}
+
+	string& concatenated = *((string*) alloca(sizeof(string)));
+	concatenated.data = new_string.data;
+	concatenated.length = new_string.length;
+	return set_string(dst_logical_form, src_logical_form, concatenated);
+}
+
+template<typename Semantics, typename StringMapType>
+inline bool get_string(const Semantics& src_logical_form,
+		sequence& dst, const StringMapType& token_map)
+{
+	string& str = *((string*) alloca(sizeof(string)));
+	if (!get_string(src_logical_form, str))
+		return false;
+
+	unsigned int new_token;
+	array<unsigned int>& tokens = *((array<unsigned int>*) alloca(sizeof(array<unsigned int>)));
+	if (!array_init(tokens, 8)) {
+		free(str);
+		return false;
+	}
+	unsigned int token_start = 0;
+	for (unsigned int i = 0; i < str.length; i++) {
+		if (str[i] == ' ') {
+			if (token_start != i
+			 && !get_token(string(str.data + token_start, i - token_start), new_token, token_map)
+			 && !tokens.add(new_token))
+			{
+				free(str); free(tokens);
+				return false;
+			}
+			token_start = i + 1;
+		}
+	}
+
+	if (token_start != str.length
+	 && !get_token(string(str.data + token_start, str.length - token_start), new_token, token_map)
+	 && !tokens.add(new_token))
+	{
+		free(str); free(tokens);
+		return false;
+	}
+	free(str);
+
+	dst.tokens = tokens.data;
+	dst.length = tokens.length;
+	return true;
 }
 
 template<bool DiscardImpossible, bool PruneAmbiguousLogicalForms,
@@ -1291,7 +1348,7 @@ inline weighted<sequence>* get_terminals(
 				length++;
 			}
 			return weighted_terminals;
-		} else if (!get_string(logical_form, weighted_terminals[0].object)) {
+		} else if (!get_string(logical_form, weighted_terminals[0].object, token_map)) {
 			return weighted_terminals;
 		}
 
