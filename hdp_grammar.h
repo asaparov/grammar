@@ -873,6 +873,10 @@ bool get_features(feature_set& set, const Semantics& logical_form,
 	{
 		if (!get_feature(features[i], logical_form, set.features[i], set.excluded[i], set.excluded_counts[i]))
 			return false;
+#if !defined(NDEBUG)
+		if (set.features[i] == UNION_NODE && set.excluded_counts[i] <= 1)
+			fprintf(stderr, "get_features WARNING: `get_feature` returned UNION_NODE but `excluded_count` is not greater than 1.\n");
+#endif
 	}
 	return true;
 }
@@ -885,7 +889,11 @@ bool set_features(
 	unsigned int feature_count)
 {
 	for (unsigned int i = 0; i < feature_count; i++) {
-		if (posterior.features[i] == ALL_EXCEPT) {
+#if !defined(NDEBUG)
+		if (posterior.features[i] == UNION_NODE)
+			fprintf(stderr, "set_features WARNING: Feature with value `UNION_NODE` is unsupported.\n");
+#endif
+		if (posterior.features[i] == IMPLICIT_NODE) {
 			if (!exclude_features(features[i], logical_form,
 				posterior.features.excluded[i], posterior.features.excluded_counts[i]))
 			{
@@ -1673,13 +1681,28 @@ bool is_subset(
 		unsigned int first_feature, const unsigned int* first_excluded, unsigned int first_excluded_count,
 		unsigned int second_feature, const unsigned int* second_excluded, unsigned int second_excluded_count)
 {
-	if (first_feature == ALL_EXCEPT) {
-		if (second_feature != ALL_EXCEPT) return false;
-		return is_subset(second_excluded, second_excluded_count, first_excluded, first_excluded_count);
+	if (first_feature == IMPLICIT_NODE) {
+		if (second_feature == IMPLICIT_NODE)
+			return is_subset(second_excluded, second_excluded_count, first_excluded, first_excluded_count);
+		else return false;
+	} else if (second_feature == IMPLICIT_NODE) {
+		if (first_feature == UNION_NODE) {
+			for (unsigned int i = 0; i < first_excluded_count; i++)
+				if (index_of(first_excluded[i], second_excluded, second_excluded_count) < second_excluded_count) return false;
+			return true;
+		} else {
+			return index_of(first_feature, second_excluded, second_excluded_count) == second_excluded_count;
+		}
+	} else if (first_feature == UNION_NODE) {
+		if (second_feature == UNION_NODE) {
+			return is_subset(first_excluded, first_excluded_count, second_excluded, second_excluded_count);
+		} else {
+			return false;
+		}
+	} else if (second_feature == UNION_NODE) {
+		return index_of(first_feature, second_excluded, second_excluded_count) < second_excluded_count;
 	} else {
-		if (second_feature != ALL_EXCEPT)
-			return first_feature == second_feature;
-		return index_of(first_feature, second_excluded, second_excluded_count) == second_excluded_count;
+		return first_feature == second_feature;
 	}
 }
 
@@ -1764,7 +1787,7 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 		if (excluded_count != 0) free(excluded);
 
 		Semantics old_logical_form_set = logical_form_set;
-		if (expected_feature == ALL_EXCEPT) {
+		if (expected_feature == IMPLICIT_NODE) {
 			if (!exclude_features(distribution.feature_sequence[i], logical_form_set, expected_excluded, expected_excluded_count)) {
 				print("is_parseable ERROR: Unable to exclude semantic feature '", stderr);
 				Semantics::print(distribution.feature_sequence[i], stderr); print("' at rule: ", stderr);

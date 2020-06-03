@@ -489,7 +489,7 @@ struct rule_state {
 	   set of freed rule states) */
 	unsigned int reference_count;
 
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	unsigned int iteration;
 #endif
 
@@ -628,7 +628,7 @@ inline bool print(
 		&& print('\n', out) && print_indent(indent, out) && print("log_probability: ", out) && print(state.log_probability, out, PRINT_PROBABILITY_PRECISION)
 		&& print('\n', out) && print_indent(indent, out) && print("rule_position: ", out) && print(state.rule_position, out)
 		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.nt.length, out)))
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 		&& (state.iteration == 0 || (print('\n', out) && print_indent(indent, out) && print("(processed at iteration ", out) && print(state.iteration, out) && print(')', out)));
 #else
 		&& true;
@@ -649,7 +649,7 @@ struct nonterminal_state {
 	Semantics logical_form_set; /* TODO: the logical form is unnecessary in syntactic parsing */
 	unsigned int* positions;
 
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	unsigned int iteration;
 #endif
 
@@ -934,7 +934,7 @@ struct parser_search_state {
 		rule_completer_state<Mode, Semantics>* rule_completer;
 	};
 
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	unsigned int iteration;
 #endif
 
@@ -974,7 +974,7 @@ inline bool operator < (
 template<parse_mode Mode, typename Semantics, typename Stream>
 inline bool print_iteration(const parser_search_state<Mode, Semantics>& state, Stream& out)
 {
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	fprintf(stderr, "\n(created on iteration %u)", state.iteration);
 #endif
 	return true;
@@ -1026,7 +1026,7 @@ struct agenda<Mode, Semantics> {
 			parser_search_state<Mode, Semantics>& new_state,
 			cell_value<Mode, Semantics>& cell)
 	{
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 		new_state.iteration = iteration;
 #endif
 		queue.insert(new_state);
@@ -1037,7 +1037,7 @@ struct agenda<Mode, Semantics> {
 		parser_search_state<Mode, Semantics> state = *last;
 		queue.erase(last);
 
-//#if !defined(NDEBUG)
+//#if defined(DEBUG_PARSER)
 		if (Mode != MODE_SAMPLE && state.priority > last_priority + 1.0e-12)
 			fprintf(stderr, "%sparse WARNING: Search is not monotonic. (iteration %u)\n", parser_prefix, iteration);
 		last_priority = state.priority;
@@ -1502,7 +1502,7 @@ struct cell_value {
 				free(dst);
 				return false;
 			}
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 			dst.completed[dst.completed.length].iteration = nonterminal.iteration;
 #endif
 			dst.completed.length++;
@@ -2495,7 +2495,7 @@ inline bool push_rule_states(
 		new_rule->log_probability = rule_log_conditional;
 		if (Mode == MODE_PARSE)
 			new_rule->log_probability += min(log_probability<false>(logical_form_set), cell.prior_probability);
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 		new_rule->iteration = 0;
 #endif
 
@@ -2607,7 +2607,7 @@ inline bool complete_nonterminal(
 	unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[rule.is_terminal() ? 1 : rule.nt.length];
 
 if (Mode == MODE_PARSE && debug_flag) {
-check_log_likelihood(G, syntax, logical_form_set, nonterminal_id, log_likelihood, parse_chart.token_map);
+check_log_likelihood(queue, G, syntax, logical_form_set, nonterminal_id, log_likelihood, parse_chart.token_map);
 }
 
 	/* check if this completed nonterminal improves upon any of the existing bounds */
@@ -2650,7 +2650,7 @@ for (const nonterminal_state<Mode, Semantics>& state : completed_cell.completed)
 	if (state.logical_form_set == logical_form_set) {
 		fprintf(stderr, "compute_nonterminal WARNING: Detected duplicate logical form in chart cell:\n");
 		print(logical_form_set, stderr, *debug_terminal_printer); print('\n', stderr);
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 		fprintf(stderr, "(the duplicate logical form was completed on iteration %u)\n", state.iteration);
 #endif
 
@@ -2671,7 +2671,7 @@ exit(EXIT_FAILURE);
 		completed_cell.completed[(unsigned int) completed_cell.completed.length];
 	if (!init(new_nonterminal, syntax, positions, logical_form_set, log_likelihood))
 		return false;
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	new_nonterminal.iteration = queue.iteration;
 #endif
 	completed_cell.completed.length++;
@@ -2938,7 +2938,7 @@ bool complete_invert_state(
 			new_rule->log_probability = inner_probability;
 			if (Mode != MODE_COMPUTE_BOUNDS)
 				new_rule->logical_form_set = logical_form;
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 			new_rule->iteration = 0;
 #endif
 
@@ -3097,6 +3097,7 @@ bool check_invariants(
 
 template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
 inline void check_log_likelihood(
+		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
 		const syntax_state<Mode, Semantics>& syntax,
 		const Semantics& logical_form_set,
@@ -3106,16 +3107,18 @@ inline void check_log_likelihood(
 {
 	double expected_log_likelihood = ::log_probability(G, syntax.get_tree(), logical_form_set, token_map, nonterminal_id);
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
-		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect.\n");
+		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect. (iteration %u)\n", queue.iteration);
 		print(logical_form_set, stderr, *debug_terminal_printer); print("\n", stderr);
 		print(syntax.get_tree(), stderr, *debug_nonterminal_printer, *debug_terminal_printer, nonterminal_id); print("\n", stderr);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
+		exit(EXIT_FAILURE);
 	}
 }
 
 template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
 inline void check_log_likelihood(
+		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
 		const invert_iterator_state<Mode, Semantics>& inverse,
 		const Semantics& child_logical_form_set,
@@ -3137,7 +3140,7 @@ inline void check_log_likelihood(
 	expected_log_likelihood += log_probability(G, inverse.syntax.get_tree(), child_logical_form_set, token_map, state.syntax.get_rule().nonterminals[state.rule_position]);
 
 	if (!std::isinf(expected_log_likelihood) && fabs(expected_log_likelihood - computed_log_likelihood) > 1.0e-12) {
-		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect.\n");
+		fprintf(stderr, "check_log_likelihood WARNING: The computed log likelihood is incorrect. (iteration %u)\n", queue.iteration);
 		print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
@@ -3354,7 +3357,7 @@ bool process_rule_state(
 	const Morphology& morphology_parser,
 	rule_state<Mode, Semantics>& state)
 {
-#if !defined(NDEBUG)
+#if defined(DEBUG_PARSER)
 	state.iteration = queue.iteration;
 #endif
 
@@ -3797,18 +3800,19 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 59)
+/*if (Mode == MODE_PARSE && queue.iteration == 18463)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
 		parser_search_state<Mode, Semantics> state = queue.pop(queue.iteration);
 		last_log_priority = log(queue.priority(root_cell));
 
-/*if (Mode == MODE_PARSE) {
-default_scribe scribe;
+#if defined(DEBUG_PARSER)
+if (Mode == MODE_PARSE) {
 print("[ITERATION ", stderr); print(queue.iteration, stderr); print("] ", stderr);
-print(state, stderr, scribe, *debug_terminal_printer); print("\n\n", stderr);
-}*/
+print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print("\n\n", stderr);
+}
+#endif
 		bool cleanup = true;
 		switch (state.phase) {
 		case PHASE_RULE:
