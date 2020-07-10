@@ -16,14 +16,6 @@
 #include <core/utility.h>
 #include <math/features.h>
 
-#if !defined(NDEBUG)
-//#define DEBUG_PARSER
-#endif
-
-#if defined(DEBUG_PARSER)
-bool DEBUG_PARSER_VALUE = true;
-#endif
-
 #define NEW_TERMINAL (UINT_MAX - 3)
 
 using namespace core;

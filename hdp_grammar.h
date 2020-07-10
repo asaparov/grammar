@@ -10,6 +10,7 @@
 
 #include <core/lex.h>
 #include <hdp/mcmc.h>
+#include <cinttypes>
 
 #include "grammar.h"
 #include "morphology.h"
@@ -1141,15 +1142,29 @@ const string& map_to_string(const hash_map<string, unsigned int>& map, unsigned 
 }
 
 constexpr bool parse_written_number(const string** map,
-		unsigned int* terminals, const unsigned int length, int& integer)
+		unsigned int* terminals, const unsigned int length, int64_t& integer)
 {
 	return false;
+}
+
+bool parse_written_number(const hash_map<string, unsigned int>& map,
+		unsigned int* terminals, const unsigned int length, int64_t& integer)
+{
+	fprintf(stderr, "parse_written_number ERROR: This function can"
+			" only be called with an integer-to-string map.\n");
+	exit(EXIT_FAILURE);
 }
 
 bool get_token(const string& identifier, unsigned int& id, const string** map) {
 	fprintf(stderr, "get_token ERROR: This function can"
 			" only be called with a string-to-integer map.\n");
 	exit(EXIT_FAILURE);
+}
+
+inline bool get_token(const string& identifier, unsigned int& id, const hash_map<string, unsigned int>& parser) {
+	bool contains;
+	id = parser.get(identifier, contains);
+	return contains;
 }
 
 template<typename Parser>
@@ -1167,8 +1182,8 @@ inline bool parse_number(const rule<Semantics>& observation,
 	if (!observation.is_terminal())
 		return false;
 
-	int integer;
-	if (observation.t.length == 1 && parse_int(map_to_string(token_map, observation.t.terminals[0]), integer)) {
+	int64_t integer;
+	if (observation.t.length == 1 && parse_long(map_to_string(token_map, observation.t.terminals[0]), integer)) {
 		return set_number(dst_logical_form, src_logical_form, integer);
 	} else if (parse_written_number(token_map, observation.t.terminals, observation.t.length, integer)) {
 		return set_number(dst_logical_form, src_logical_form, integer);
@@ -1219,8 +1234,7 @@ inline bool get_string(const Semantics& src_logical_form,
 	for (unsigned int i = 0; i < str.length; i++) {
 		if (str[i] == ' ') {
 			if (token_start != i
-			 && !get_token(string(str.data + token_start, i - token_start), new_token, token_map)
-			 && !tokens.add(new_token))
+			 && (!get_token(string(str.data + token_start, i - token_start), new_token, token_map) || !tokens.add(new_token)))
 			{
 				free(str); free(tokens);
 				return false;
@@ -1230,8 +1244,7 @@ inline bool get_string(const Semantics& src_logical_form,
 	}
 
 	if (token_start != str.length
-	 && !get_token(string(str.data + token_start, str.length - token_start), new_token, token_map)
-	 && !tokens.add(new_token))
+	 && (!get_token(string(str.data + token_start, str.length - token_start), new_token, token_map) || !tokens.add(new_token)))
 	{
 		free(str); free(tokens);
 		return false;
@@ -1310,7 +1323,7 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
-		int number;
+		int64_t number;
 		if (any_number(logical_form)) {
 			if (!PruneUnobservedTerminals) {
 				weighted_terminals[0].log_probability = 0.0;
@@ -1329,10 +1342,10 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
-		int length = snprintf(NULL, 0, "%d", number);
+		int length = snprintf(NULL, 0, "%" PRId64, number);
 		string buffer = string(length + 1);
 		buffer.length = length;
-		if (snprintf(buffer.data, length + 1, "%d", number) != length
+		if (snprintf(buffer.data, length + 1, "%" PRId64, number) != length
 		 || !get_token(buffer, weighted_terminals[0].object[0], token_map)) {
 			free(weighted_terminals[0]);
 			free(weighted_terminals);
@@ -1383,7 +1396,7 @@ inline weighted<sequence>* get_terminals(
 	for (unsigned int i = 0; i < distribution.observations.counts.size; i++) {
 		const rule<Semantics>& observation = distribution.observations.counts.keys[i];
 		if (!observation.is_terminal()) continue;
-		if (!init(weighted_terminals[length].object, {observation.nt.nonterminals, observation.nt.length})) {
+		if (!init(weighted_terminals[length].object, {observation.t.terminals, observation.t.length})) {
 			for (unsigned int j = 0; j < length; j++)
 				free(weighted_terminals[j]);
 			free(weighted_terminals);

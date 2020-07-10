@@ -10,6 +10,18 @@
 
 #include <math.h>
 
+#if !defined(NDEBUG)
+//#define DEBUG_PARSER
+#endif
+
+#if defined(DEBUG_PARSER)
+bool DEBUG_PARSER_VALUE = true;
+#endif
+
+#if defined(DEBUG_PARSER)
+#define PRINT_SEARCH_STATES
+#endif
+
 constexpr bool USE_SLICE_SAMPLING = false; /* enable/disable slice sampling (only affects sampling) */
 constexpr bool USE_BEAM_SEARCH = false; /* enable/disable beam search (only affects parsing) */
 constexpr bool USE_NONTERMINAL_PREITERATOR = false; /* use nonterminal_iterator states either before or after completing rule_states */
@@ -32,8 +44,8 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 
 
 /* TODO: the following is for debugging; delete it */
-string_map_scribe* debug_terminal_printer;
-string_map_scribe* debug_nonterminal_printer;
+const string_map_scribe* debug_terminal_printer;
+const string_map_scribe* debug_nonterminal_printer;
 bool debug_flag = false;
 bool detect_duplicate_logical_forms = false;
 
@@ -489,7 +501,7 @@ struct rule_state {
 	   set of freed rule states) */
 	unsigned int reference_count;
 
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	unsigned int iteration;
 #endif
 
@@ -628,7 +640,7 @@ inline bool print(
 		&& print('\n', out) && print_indent(indent, out) && print("log_probability: ", out) && print(state.log_probability, out, PRINT_PROBABILITY_PRECISION)
 		&& print('\n', out) && print_indent(indent, out) && print("rule_position: ", out) && print(state.rule_position, out)
 		&& (Mode == MODE_GENERATE || (print('\n', out) && print_indent(indent, out) && print("positions: ", out) && print_rule_positions(state.positions, state.rule_position, r.nt.length, out)))
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 		&& (state.iteration == 0 || (print('\n', out) && print_indent(indent, out) && print("(processed at iteration ", out) && print(state.iteration, out) && print(')', out)));
 #else
 		&& true;
@@ -649,7 +661,7 @@ struct nonterminal_state {
 	Semantics logical_form_set; /* TODO: the logical form is unnecessary in syntactic parsing */
 	unsigned int* positions;
 
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	unsigned int iteration;
 #endif
 
@@ -934,7 +946,7 @@ struct parser_search_state {
 		rule_completer_state<Mode, Semantics>* rule_completer;
 	};
 
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	unsigned int iteration;
 #endif
 
@@ -974,7 +986,7 @@ inline bool operator < (
 template<parse_mode Mode, typename Semantics, typename Stream>
 inline bool print_iteration(const parser_search_state<Mode, Semantics>& state, Stream& out)
 {
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	fprintf(stderr, "\n(created on iteration %u)", state.iteration);
 #endif
 	return true;
@@ -1026,7 +1038,7 @@ struct agenda<Mode, Semantics> {
 			parser_search_state<Mode, Semantics>& new_state,
 			cell_value<Mode, Semantics>& cell)
 	{
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 		new_state.iteration = iteration;
 #endif
 		queue.insert(new_state);
@@ -1055,6 +1067,16 @@ struct agenda<Mode, Semantics> {
 			parser_search_state<Mode, Semantics> state = *first;
 			free(state);
 			queue.erase(first);
+		}
+	}
+
+	inline void prune_low_probability_states() {
+		auto first = queue.cbegin();
+		while (!queue.empty() && (first->priority < minimum_priority || first->priority == 0.0)) {
+			parser_search_state<Mode, Semantics> state = *first;
+			free(state);
+			queue.erase(first);
+			first = queue.cbegin();
 		}
 	}
 };
@@ -1502,7 +1524,7 @@ struct cell_value {
 				free(dst);
 				return false;
 			}
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 			dst.completed[dst.completed.length].iteration = nonterminal.iteration;
 #endif
 			dst.completed.length++;
@@ -2044,16 +2066,20 @@ void right_probability(const rule<Semantics>& r,
 	chart<MODE_GENERATE, Semantics, StringMapType>& parse_chart,
 	double old_prior, double& right, double& right_prior)
 {
+#if !defined(NDEBUG)
+	if (r.is_terminal())
+		fprintf(stderr, "right_probability WARNING: `r` is a terminal rule.\n");
+#endif
 	right = 0.0;
-	for (unsigned int i = 0; i < r.length; i++) {
+	for (unsigned int i = 0; i < r.nt.length; i++) {
 		Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
-		if (!apply(r.transformations[i], logical_form_set, next_logical_form)) {
+		if (!apply(r.nt.transformations[i], logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
 		}
 
 		double inner, initial_prior;
-		inner_probability(parse_chart, r.nonterminals[i], next_logical_form, {0, 0}, inner, right_prior, initial_prior);
+		inner_probability(parse_chart, r.nt.nonterminals[i], next_logical_form, {0, 0}, inner, right_prior, initial_prior);
 		free(next_logical_form);
 		right += inner;
 	}
@@ -2204,15 +2230,15 @@ void right_probability(
 	right = 0.0;
 	unsigned int start = rule.rule_position + (IgnoreNext ? 1 : 0);
 	const ::rule<Semantics>& r = rule.syntax.get_rule();
-	for (unsigned int i = start; i < r.length; i++) {
+	for (unsigned int i = start; i < r.nt.length; i++) {
 		Semantics& next_logical_form = *((Semantics*) alloca(sizeof(Semantics)));
-		if (!apply(r.transformations[i], rule.logical_form_set, next_logical_form)) {
+		if (!apply(r.nt.transformations[i], rule.logical_form_set, next_logical_form)) {
 			right = -std::numeric_limits<double>::infinity();
 			return;
 		}
 
 		double inner, initial_prior, inner_prior;
-		inner_probability(parse_chart, r.nonterminals[i], next_logical_form, {0, 0}, inner, inner_prior, initial_prior);
+		inner_probability(parse_chart, r.nt.nonterminals[i], next_logical_form, {0, 0}, inner, inner_prior, initial_prior);
 		free(next_logical_form);
 		right_prior = min(right_prior, inner_prior);
 		if (IgnoreNext || i > start) right += inner;
@@ -2495,7 +2521,7 @@ inline bool push_rule_states(
 		new_rule->log_probability = rule_log_conditional;
 		if (Mode == MODE_PARSE)
 			new_rule->log_probability += min(log_probability<false>(logical_form_set), cell.prior_probability);
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 		new_rule->iteration = 0;
 #endif
 
@@ -2650,7 +2676,7 @@ for (const nonterminal_state<Mode, Semantics>& state : completed_cell.completed)
 	if (state.logical_form_set == logical_form_set) {
 		fprintf(stderr, "compute_nonterminal WARNING: Detected duplicate logical form in chart cell:\n");
 		print(logical_form_set, stderr, *debug_terminal_printer); print('\n', stderr);
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 		fprintf(stderr, "(the duplicate logical form was completed on iteration %u)\n", state.iteration);
 #endif
 
@@ -2671,7 +2697,7 @@ exit(EXIT_FAILURE);
 		completed_cell.completed[(unsigned int) completed_cell.completed.length];
 	if (!init(new_nonterminal, syntax, positions, logical_form_set, log_likelihood))
 		return false;
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	new_nonterminal.iteration = queue.iteration;
 #endif
 	completed_cell.completed.length++;
@@ -2938,7 +2964,7 @@ bool complete_invert_state(
 			new_rule->log_probability = inner_probability;
 			if (Mode != MODE_COMPUTE_BOUNDS)
 				new_rule->logical_form_set = logical_form;
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 			new_rule->iteration = 0;
 #endif
 
@@ -3357,7 +3383,7 @@ bool process_rule_state(
 	const Morphology& morphology_parser,
 	rule_state<Mode, Semantics>& state)
 {
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 	state.iteration = queue.iteration;
 #endif
 
@@ -3800,14 +3826,14 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 18463)
+/*if (Mode == MODE_PARSE && queue.iteration == 7248)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
 		parser_search_state<Mode, Semantics> state = queue.pop(queue.iteration);
 		last_log_priority = log(queue.priority(root_cell));
 
-#if defined(DEBUG_PARSER)
+#if defined(PRINT_SEARCH_STATES)
 if (Mode == MODE_PARSE) {
 print("[ITERATION ", stderr); print(queue.iteration, stderr); print("] ", stderr);
 print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print("\n\n", stderr);
@@ -3859,13 +3885,8 @@ print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print
 		if (USE_BEAM_SEARCH && (Mode == MODE_PARSE || Mode == MODE_GENERATE))
 			queue.prune_beam();
 
-		/*auto first = queue.cbegin();
-		while (Mode == MODE_PARSE && !queue.is_empty() && (first->priority < minimum_priority || first->priority == 0.0)) {
-			parser_search_state<Mode, Semantics> state = *first;
-			free(state);
-			queue.erase(first);
-			first = queue.cbegin();
-		}*/
+		if (Mode == MODE_PARSE)
+			queue.prune_low_probability_states();
 	}
 
 	return result;
