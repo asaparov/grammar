@@ -2074,7 +2074,8 @@ bool is_parseable(
 		NonterminalPrinter& nonterminal_printer,
 		TerminalPrinter& terminal_printer,
 		const StringMapType& token_map,
-		unsigned int nonterminal = 1)
+		unsigned int nonterminal = 1,
+		bool test_equivalence = true)
 {
 	double prior = log_probability<false>(logical_form_set);
 	if (prior == -std::numeric_limits<double>::infinity()) {
@@ -2094,8 +2095,11 @@ bool is_parseable(
 	if (!is_parseable<true, Semantics, Distribution, Morphology, TerminalPrinter, NonterminalPrinter, StringMapType>(
 			syntax, logical_form, G, morphology_parser, logical_form_set, printers, token_map, prior, nonterminal))
 		return false;
-	if (!equivalent(logical_form, logical_form_set)) {
-		print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);
+	if ((test_equivalence && !equivalent(logical_form, logical_form_set))
+	 || (!test_equivalence && !is_subset(logical_form, logical_form_set))) {
+		if (test_equivalence)
+			print("is_parseable ERROR: The parsed logical form is not equivalent to the reference logical form.\n", stderr);
+		else print("is_parseable ERROR: The reference logical form is not a subset of the parsed logical form set.\n", stderr);
 		print("  Reference logical form: ", stderr); print(logical_form, stderr, terminal_printer); print('\n', stderr);
 		print("  Parsed logical form:    ", stderr); print(logical_form_set, stderr, terminal_printer); print('\n', stderr);
 		return false;

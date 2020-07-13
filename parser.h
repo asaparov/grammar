@@ -3138,6 +3138,7 @@ inline void check_log_likelihood(
 		print(syntax.get_tree(), stderr, *debug_nonterminal_printer, *debug_terminal_printer, nonterminal_id); print("\n", stderr);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
+		fprintf(stderr, "(seed = %u)\n", get_seed());
 		exit(EXIT_FAILURE);
 	}
 }
@@ -3170,6 +3171,8 @@ inline void check_log_likelihood(
 		print(inverse, stderr, *debug_nonterminal_printer, *debug_terminal_printer);
 		fprintf(stderr, "  Expected log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, expected_log_likelihood);
 		fprintf(stderr, "  Computed log likelihood = %.*lf\n", PRINT_PROBABILITY_PRECISION, computed_log_likelihood);
+		fprintf(stderr, "(seed = %u)\n", get_seed());
+		exit(EXIT_FAILURE);
 	}
 }
 
@@ -3826,7 +3829,7 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 7248)
+/*if (Mode == MODE_PARSE && queue.iteration == 10000)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
