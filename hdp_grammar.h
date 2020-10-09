@@ -624,6 +624,10 @@ struct hdp_rule_distribution
 		return type == NONTERMINAL;
 	}
 
+	inline bool is_string_preterminal() const {
+		return type == PRETERMINAL_STRING;
+	}
+
 	inline part_of_speech get_part_of_speech() const {
 		return h.pi.get_part_of_speech();
 	}

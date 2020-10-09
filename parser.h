@@ -1828,6 +1828,16 @@ bool expand_nonterminal(
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
 	span position);
+template<bool AllowAmbiguous, parse_mode Mode,
+	typename Semantics, typename Distribution,
+	typename StringMapType, typename Morphology>
+bool process_rule_state(
+	agenda<Mode, Semantics>& queue,
+	grammar<Semantics, Distribution>& G,
+	chart<Mode, Semantics, StringMapType>& parse_chart,
+	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
+	rule_state<Mode, Semantics>& state);
 
 
 template<parse_mode Mode, typename Semantics, typename Distribution>
@@ -2481,7 +2491,7 @@ inline double max_log_conditional(
 	exit(EXIT_FAILURE);
 }
 
-template<parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution>
+template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename StringMapType, typename Distribution, typename Morphology>
 inline bool push_rule_states(
 		agenda<Mode, Semantics>& queue,
 		grammar<Semantics, Distribution>& G,
@@ -2489,7 +2499,8 @@ inline bool push_rule_states(
 		unsigned int nonterminal, const rule<Semantics>& r,
 		const Semantics& logical_form_set,
 		cell_value<Mode, Semantics>& cell,
-		const tokenized_sentence<Semantics>& sentence,
+		tokenized_sentence<Semantics>& sentence,
+		const Morphology& morphology_parser,
 		span position, double rule_log_conditional = 0.0)
 {
 	auto& N = get_nonterminal<Mode>(G, nonterminal);
@@ -2524,6 +2535,12 @@ inline bool push_rule_states(
 #if defined(PRINT_SEARCH_STATES)
 		new_rule->iteration = 0;
 #endif
+
+		if (Mode != MODE_GENERATE && get_nonterminal<Mode>(G, next_nonterminal).rule_distribution.is_string_preterminal()) {
+			process_rule_state<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, *new_rule);
+			free(*new_rule); if (new_rule->reference_count == 0) free(new_rule);
+			continue;
+		}
 
 		double priority = compute_priority(*new_rule, parse_chart, N);
 		if (priority == 0.0) {
@@ -2568,6 +2585,22 @@ bool push_invert_state(
 	{
 		/* the inverse is empty, so return quietly */
 		free(inverse); return true;
+	} else if (
+		Mode == MODE_COMPUTE_BOUNDS
+	 && get_nonterminal<Mode>(G, rule.syntax.get_rule().nt.nonterminals[rule.rule_position]).rule_distribution.is_string_preterminal())
+	{
+		Semantics any;
+		initialize_any(any);
+		if (!invert(inverse->inverse, inverse->inverse_count,
+			rule.syntax.get_rule().nt.transformations[rule.rule_position],
+			any, logical_form_set))
+		{
+			/* the inverse is empty, so return quietly */
+			free(inverse); return true;
+		}
+		for (unsigned int i = 0; i < inverse->inverse_count; i++)
+			free(inverse->inverse[i]);
+		free(inverse->inverse);
 	}
 	inverse->index = 0;
 
@@ -2743,7 +2776,7 @@ inline bool push_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	unsigned int nonterminal,
 	cell_value<Mode, Semantics>& cell,
@@ -2759,21 +2792,56 @@ inline bool push_nonterminal_iterator(
 			const Semantics& logical_form_set)
 		{
 			if (Mode == MODE_COMPUTE_BOUNDS) {
-				double inside = max_log_conditional(N, syntax, logical_form_set, parse_chart.token_map);
-				if (is_negative_inf(inside))
-					return true;
-				if (USE_NONTERMINAL_PREITERATOR) {
-					double prior = 0.0;
-					if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
-						prior = min(log_probability<false>(logical_form_set), cell.prior_probability);
-					unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
-					unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.nt.length];
-					if (!r.is_terminal())
-						return push_rule_states(queue, G, parse_chart, nonterminal, r, logical_form_set,
-								cell, sentence, {start, end}, inner_log_probability - prior + inside);
+				if (N.rule_distribution.is_string_preterminal()) {
+					unsigned int posterior_length;
+					weighted<Semantics>* posterior = log_conditional<true, true>(N.rule_distribution, r, logical_form_set, parse_chart.token_map, posterior_length);
+					if (posterior == NULL) {
+						return false;
+					} else if (posterior_length == 0) {
+						free(posterior);
+						return true;
+					}
+#if !defined(NDEBUG)
+					if (posterior_length != 1) {
+						fprintf(stderr, "push_nonterminal_iterator WARNING: `log_conditional` returned more than 1 logical form for string preterminal.\n");
+						for (unsigned int i = 1; i < posterior_length; i++)
+							free(posterior[i]);
+					}
+#endif
+					if (USE_NONTERMINAL_PREITERATOR) {
+						double prior = 0.0;
+						if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
+							prior = min(log_probability<false>(posterior[0].object), cell.prior_probability);
+						unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
+						unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.nt.length];
+						if (!r.is_terminal()) {
+							bool result = push_rule_states<AllowAmbiguous>(queue, G, parse_chart, nonterminal, r, posterior[0].object, cell,
+									sentence, morphology_parser, {start, end}, inner_log_probability - prior + posterior[0].log_probability);
+							free(posterior[0]); free(posterior);
+							return result;
+						}
+					}
+					bool result = complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell,
+							syntax, posterior[0].object, inner_log_probability + posterior[0].log_probability, positions);
+					free(posterior[0]); free(posterior);
+					return result;
+				} else {
+					double inside = max_log_conditional(N, syntax, logical_form_set, parse_chart.token_map);
+					if (is_negative_inf(inside))
+						return true;
+					if (USE_NONTERMINAL_PREITERATOR) {
+						double prior = 0.0;
+						if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
+							prior = min(log_probability<false>(logical_form_set), cell.prior_probability);
+						unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
+						unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.nt.length];
+						if (!r.is_terminal())
+							return push_rule_states<AllowAmbiguous>(queue, G, parse_chart, nonterminal, r, logical_form_set,
+									cell, sentence, morphology_parser, {start, end}, inner_log_probability - prior + inside);
+					}
+					return complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell,
+							syntax, logical_form_set, inner_log_probability + inside, positions);
 				}
-				return complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell,
-						syntax, logical_form_set, inner_log_probability + inside, positions);
 			}
 
 			unsigned int posterior_length;
@@ -2784,6 +2852,40 @@ inline bool push_nonterminal_iterator(
 			} else if (posterior_length == 0) {
 				free(posterior);
 				return true;
+			}
+
+			if (N.rule_distribution.is_string_preterminal()) {
+#if !defined(NDEBUG)
+				if (posterior_length != 1) {
+					fprintf(stderr, "push_nonterminal_iterator WARNING: `log_conditional` returned more than 1 logical form for string preterminal.\n");
+					for (unsigned int i = 1; i < posterior_length; i++)
+						free(posterior[i]);
+				}
+#endif
+
+				double old_prior = 0.0;
+				if (Mode != MODE_SAMPLE && Mode != MODE_GENERATE && Mode != MODE_COMPUTE_BOUNDS)
+					old_prior = min(log_probability<false>(posterior[0].object), cell.prior_probability);
+				if (USE_NONTERMINAL_PREITERATOR) {
+					double right, prior = old_prior;
+					if (!r.is_terminal() && (Mode == MODE_PARSE || Mode == MODE_GENERATE)) {
+						right_probability(r, posterior[0].object, positions, parse_chart, old_prior, right, prior);
+					} else {
+						right = old_prior; prior = old_prior;
+					}
+					unsigned int start = (Mode == MODE_GENERATE) ? 0 : positions[0];
+					unsigned int end = (Mode == MODE_GENERATE) ? 0 : positions[r.is_terminal() ? 1 : r.nt.length];
+					if (!r.is_terminal()) {
+						bool result = push_rule_states<AllowAmbiguous>(queue, G, parse_chart, nonterminal, r, posterior[0].object, cell,
+								sentence, morphology_parser, {start, end}, inner_log_probability + posterior[0].log_probability - right);
+						free(posterior[0]); free(posterior);
+						return result;
+					}
+				}
+				bool result = complete_nonterminal(queue, G, parse_chart, sentence, nonterminal, cell,
+						syntax, posterior[0].object, inner_log_probability + posterior[0].log_probability - old_prior, positions);
+				free(posterior[0]); free(posterior);
+				return result;
 			}
 
 			/* TODO: either remove this special case for the
@@ -2925,7 +3027,7 @@ bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const rule_state<Mode, Semantics>& completed_rule,
 	const syntax_state<Mode, Semantics>& syntax,
@@ -2968,6 +3070,12 @@ bool complete_invert_state(
 			new_rule->iteration = 0;
 #endif
 
+			if (Mode != MODE_GENERATE && get_nonterminal<Mode>(G, next_nonterminal).rule_distribution.is_string_preterminal()) {
+				process_rule_state<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, *new_rule);
+				free(*new_rule); if (new_rule->reference_count == 0) free(new_rule);
+				continue;
+			}
+
 			parser_search_state<Mode, Semantics> state;
 			state.rule = new_rule;
 			state.phase = PHASE_RULE;
@@ -3009,7 +3117,7 @@ inline bool complete_invert_state(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const invert_iterator_state<Mode, Semantics>& state)
 {
@@ -3030,7 +3138,7 @@ bool process_invert_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	invert_iterator_state<Mode, Semantics>& iterator,
 	bool& cleanup)
@@ -3228,7 +3336,7 @@ bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	const Semantics& logical_form_set,
 	unsigned int nonterminal,
@@ -3260,8 +3368,8 @@ bool expand_nonterminal(
 			push_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser,
 					nonterminal, cell, syntax_state<Mode, Semantics>(r), logical_form_set, positions, 0.0);
 		} else {
-			if (!push_rule_states(queue, G, parse_chart, nonterminal,
-					r, logical_form_set, cell, sentence, position))
+			if (!push_rule_states<AllowAmbiguous>(queue, G, parse_chart, nonterminal,
+					r, logical_form_set, cell, sentence, morphology_parser, position))
 			{
 				free_rules(rules);
 				return false;
@@ -3279,7 +3387,7 @@ inline bool expand_nonterminal(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
 	const Morphology& morphology_parser,
 	cell_value<Mode, Semantics>& cell,
 	rule_state<Mode, Semantics>& state,
@@ -3322,7 +3430,16 @@ inline bool expand_nonterminal(
 	if (!cell_to_expand->waiting_states.add(&state))
 		return false;
 	state.reference_count++;
-	if (Mode != MODE_SAMPLE) {
+	if (Mode == MODE_COMPUTE_BOUNDS) {
+		Semantics any;
+		initialize_any(any);
+		for (unsigned int i = 0; i < cell_to_expand->completed.length; i++) {
+			nonterminal_state<Mode, Semantics>& nonterminal = cell_to_expand->completed[i];
+			if (!push_invert_state(queue, G, parse_chart, state,
+					any, nonterminal.syntax, nonterminal.log_probability))
+				return false;
+		}
+	} else if (Mode != MODE_SAMPLE) {
 		for (unsigned int i = 0; i < cell_to_expand->completed.length; i++) {
 			nonterminal_state<Mode, Semantics>& nonterminal = cell_to_expand->completed[i];
 			if (!push_invert_state(queue, G, parse_chart, state,
@@ -3337,7 +3454,7 @@ inline bool expand_nonterminal(
 	}
 
 	/* cut off the search if this cell was previously expanded */
-	if (cell_to_expand->expanded)  return true;
+	if (cell_to_expand->expanded) return true;
 	cell_to_expand->expanded = true;
 
 	/* we're expanding this cell, so set its outer probability */
@@ -3482,12 +3599,13 @@ bool process_terminal_iterator(
 	return false;
 }
 
-template<parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType>
+template<bool AllowAmbiguous, parse_mode Mode, typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
 bool process_nonterminal_iterator(
 	agenda<Mode, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
 	chart<Mode, Semantics, StringMapType>& parse_chart,
-	const tokenized_sentence<Semantics>& sentence,
+	tokenized_sentence<Semantics>& sentence,
+	const Morphology& morphology_parser,
 	nonterminal_iterator_state<Mode, Semantics>& iterator,
 	bool& cleanup)
 {
@@ -3520,8 +3638,8 @@ bool process_nonterminal_iterator(
 		unsigned int start = (Mode == MODE_GENERATE) ? 0 : iterator.positions[0];
 		unsigned int end = (Mode == MODE_GENERATE) ? 0 : iterator.positions[rule.is_terminal() ? 1 : rule.nt.length];
 		if (!rule.is_terminal())
-			return push_rule_states(queue, G, parse_chart, iterator.nonterminal, rule,
-					logical_form, *iterator.cell, sentence, {start, end}, inner_probability - right);
+			return push_rule_states<AllowAmbiguous>(queue, G, parse_chart, iterator.nonterminal, rule,
+					logical_form, *iterator.cell, sentence, morphology_parser, {start, end}, inner_probability - right);
 	}
 	return complete_nonterminal(queue, G, parse_chart, sentence, iterator.nonterminal,
 			*iterator.cell, iterator.syntax, logical_form, inner_probability - old_prior, iterator.positions);
@@ -3629,7 +3747,7 @@ inline bool is_sorted(const cell_value<MODE_PARSE, Semantics>& cell, double& bes
 	return true;
 }
 
-template<typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
+template<bool AllowAmbiguous, typename Semantics, typename Distribution, typename StringMapType, typename Morphology>
 inline bool update_outer_probabilities(
 	agenda<MODE_PARSE, Semantics>& queue,
 	grammar<Semantics, Distribution>& G,
@@ -3739,7 +3857,7 @@ return;*/
 			cell.expanded = true;
 			cell.prior_probability = prior;
 			cell.var.set_outer_probability(prior);
-			return expand_nonterminal(queue, G, parse_chart, sentence, morphology_parser, logical_form_set, 1, cell, {0, sentence.length});
+			return expand_nonterminal<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, logical_form_set, 1, cell, {0, sentence.length});
 		};
 	/* TODO: should parse_chart.cell_count be re-initialized to 0 here? */
 	return root_cells.expand_cells(logical_form, expand_cell);
@@ -3829,7 +3947,7 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 10000)
+/*if (Mode == MODE_PARSE && queue.iteration == 1385)
 fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
 
 		/* pop the next item from the priority queue */
@@ -3855,7 +3973,7 @@ print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print
 			if (cleanup) { free(*state.terminal_iterator); free(state.terminal_iterator); }
 			break;
 		case PHASE_NONTERMINAL_ITERATOR:
-			process_nonterminal_iterator(queue, G, parse_chart, sentence, *state.nonterminal_iterator, cleanup);
+			process_nonterminal_iterator<AllowAmbiguous>(queue, G, parse_chart, sentence, morphology_parser, *state.nonterminal_iterator, cleanup);
 			if (cleanup) { free(*state.nonterminal_iterator); free(state.nonterminal_iterator); }
 			break;
 		case PHASE_INVERT_ITERATOR:
@@ -3926,7 +4044,7 @@ bool sample_chart(unsigned int nonterminal_id,
 	const Semantics& logical_form,
 	unsigned int start, unsigned int& end)
 {
-	nonterminal<Semantics, Distribution>& N = G.nonterminals[nonterminal_id - 1];
+	nonterminal<Semantics, Distribution>& N = get_nonterminal<MODE_SAMPLE>(G, nonterminal_id);
 	const array<weighted_feature_set<double>>* posterior = log_conditional<true, false>(N.rule_distribution, syntax.right, logical_form);
 	if (posterior == NULL) return false;
 
