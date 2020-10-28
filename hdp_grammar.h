@@ -1186,11 +1186,40 @@ inline bool parse_number(const rule<Semantics>& observation,
 	if (!observation.is_terminal())
 		return false;
 
+	array<char> integer_str(16);
+	unsigned long long decimal = 0;
+	bool could_be_numerical = true;
+	for (unsigned int i = 0; i < observation.t.length; i++) {
+		const string& token = map_to_string(token_map, observation.t.terminals[i]);
+		if (!integer_str.append(token.data, token.length))
+			return false;
+
+		i++;
+		if (i == observation.t.length)
+			break;
+
+		const string& next = map_to_string(token_map, observation.t.terminals[i]);
+		if (next == ",") {
+			if (!integer_str.append(token.data, token.length)) return false;
+		} else if (next == ".") {
+			i++;
+			if (i + 1 != observation.t.length
+			 || !parse_ulonglong(map_to_string(token_map, observation.t.terminals[i]), decimal))
+			{
+				could_be_numerical = false;
+			}
+			break;
+		} else {
+			could_be_numerical = false;
+			break;
+		}
+	}
+
 	int64_t integer;
-	if (observation.t.length == 1 && parse_long(map_to_string(token_map, observation.t.terminals[0]), integer)) {
-		return set_number(dst_logical_form, src_logical_form, integer);
+	if (could_be_numerical && parse_long(integer_str, integer)) {
+		return set_number(dst_logical_form, src_logical_form, integer, decimal);
 	} else if (parse_written_number(token_map, observation.t.terminals, observation.t.length, integer)) {
-		return set_number(dst_logical_form, src_logical_form, integer);
+		return set_number(dst_logical_form, src_logical_form, integer, 0);
 	} else {
 		return false;
 	}
@@ -1327,7 +1356,7 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
-		int64_t number;
+		int64_t integer; uint64_t decimal;
 		if (any_number(logical_form)) {
 			if (!PruneUnobservedTerminals) {
 				weighted_terminals[0].log_probability = 0.0;
@@ -1336,7 +1365,7 @@ inline weighted<sequence>* get_terminals(
 				length++;
 			}
 			return weighted_terminals;
-		} else if (!get_number(logical_form, number)) {
+		} else if (!get_number(logical_form, integer, decimal)) {
 			return weighted_terminals;
 		}
 
@@ -1346,11 +1375,16 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
-		int length = snprintf(NULL, 0, "%" PRId64, number);
+		int length;
+		if (decimal == 0)
+			length = snprintf(NULL, 0, "%" PRId64, integer);
+		else length = snprintf(NULL, 0, "%" PRId64 ".%" PRIu64, integer, decimal);
 		string buffer = string(length + 1);
 		buffer.length = length;
-		if (snprintf(buffer.data, length + 1, "%" PRId64, number) != length
-		 || !get_token(buffer, weighted_terminals[0].object[0], token_map)) {
+		if ((decimal == 0 && snprintf(buffer.data, length + 1, "%" PRId64, integer) != length)
+		 || (decimal != 0 && snprintf(buffer.data, length + 1, "%" PRId64 ".%" PRIu64, integer, decimal) != length)
+		 || !get_token(buffer, weighted_terminals[0].object[0], token_map))
+		{
 			free(weighted_terminals[0]);
 			free(weighted_terminals);
 			return NULL;

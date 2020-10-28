@@ -32,6 +32,10 @@ struct conjugate_pair {
 		return preterminal;
 	}
 
+	constexpr bool is_string_preterminal() const {
+		return false;
+	}
+
 	constexpr part_of_speech get_part_of_speech() const {
 		return POS_OTHER;
 	}

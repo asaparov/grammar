@@ -1313,12 +1313,12 @@ inline bool any_number(const tree_semantics& src) {
 	return false;
 }
 
-inline bool get_number(const tree_semantics& src, int64_t& value) {
+inline bool get_number(const tree_semantics& src, int64_t& integer, uint64_t& decimal) {
 	fprintf(stderr, "get_number ERROR: This is unimplemented for tree_semantics.\n");
 	return false;
 }
 
-inline bool set_number(tree_semantics& exp, const tree_semantics& set, int64_t value) {
+inline bool set_number(tree_semantics& exp, const tree_semantics& set, int64_t integer, uint64_t decimal) {
 	fprintf(stderr, "set_number ERROR: This is unimplemented for tree_semantics.\n");
 	return false;
 }
