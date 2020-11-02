@@ -1812,6 +1812,7 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from ground truth logical form at rule: ", stderr);
+			print("      True logical form: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
 			return false;
 		}
@@ -1824,6 +1825,7 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			print("  Logical form: ", stderr); print(logical_form_set, stderr, printers.key); print('\n', stderr);
 			if (expected_excluded_count != 0) free(expected_excluded);
 			return false;
 		} else if (!is_subset(expected_feature, expected_excluded, expected_excluded_count, feature, excluded, excluded_count)) {
@@ -1831,6 +1833,8 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' of the ground truth logical form is not a subset of that of the logical form set at rule: ", stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			print("      True logical form: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
+			print("  Computed logical form: ", stderr); print(logical_form_set, stderr, printers.key); print('\n', stderr);
 			if (expected_excluded_count != 0) free(expected_excluded);
 			if (excluded_count != 0) free(excluded);
 			return false;

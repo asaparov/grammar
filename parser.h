@@ -3411,8 +3411,8 @@ inline bool expand_nonterminal(
 				cell_to_expand->next = (cell_value<Mode, Semantics>*) malloc(sizeof(cell_value<Mode, Semantics>));
 				if (cell_to_expand->next == NULL || !init(*cell_to_expand->next,
 						cell_to_expand->var.get_inner_probability(),
-						cell_to_expand->var.get_inner_prior_probability(),
-						cell_to_expand->var.get_initial_prior_probability()))
+						(Mode == MODE_COMPUTE_BOUNDS ? 0.0 : cell_to_expand->var.get_inner_prior_probability()),
+						(Mode == MODE_COMPUTE_BOUNDS ? 0.0 : cell_to_expand->var.get_initial_prior_probability())))
 				{
 					if (cell_to_expand->next != NULL) free(cell_to_expand->next);
 					fprintf(stderr, "expand_nonterminal ERROR: Out of memory.\n");
