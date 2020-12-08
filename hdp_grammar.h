@@ -1375,14 +1375,14 @@ inline weighted<sequence>* get_terminals(
 			return NULL;
 		}
 
-		int length;
+		int string_length;
 		if (decimal == 0)
-			length = snprintf(NULL, 0, "%" PRId64, integer);
-		else length = snprintf(NULL, 0, "%" PRId64 ".%" PRIu64, integer, decimal);
-		string buffer = string(length + 1);
-		buffer.length = length;
-		if ((decimal == 0 && snprintf(buffer.data, length + 1, "%" PRId64, integer) != length)
-		 || (decimal != 0 && snprintf(buffer.data, length + 1, "%" PRId64 ".%" PRIu64, integer, decimal) != length)
+			string_length = snprintf(NULL, 0, "%" PRId64, integer);
+		else string_length = snprintf(NULL, 0, "%" PRId64 ".%" PRIu64, integer, decimal);
+		string buffer = string(string_length + 1);
+		buffer.length = string_length;
+		if ((decimal == 0 && snprintf(buffer.data, string_length + 1, "%" PRId64, integer) != string_length)
+		 || (decimal != 0 && snprintf(buffer.data, string_length + 1, "%" PRId64 ".%" PRIu64, integer, decimal) != string_length)
 		 || !get_token(buffer, weighted_terminals[0].object[0], token_map))
 		{
 			free(weighted_terminals[0]);
