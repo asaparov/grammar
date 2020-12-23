@@ -3947,9 +3947,6 @@ parse_result parse(
 		best_derivation_probabilities[i] = -std::numeric_limits<double>::infinity();
 	for (queue.iteration = 0; !queue.is_empty(); queue.iteration++)
 	{
-/*if (Mode == MODE_PARSE && queue.iteration == 1385)
-fprintf(stderr, "DEBUG: BREAKPOINT\n");*/
-
 		/* pop the next item from the priority queue */
 		parser_search_state<Mode, Semantics> state = queue.pop(queue.iteration);
 		last_log_priority = log(queue.priority(root_cell));
