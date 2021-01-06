@@ -44,10 +44,10 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 
 
 /* TODO: the following is for debugging; delete it */
-const string_map_scribe* debug_terminal_printer;
-const string_map_scribe* debug_nonterminal_printer;
-bool debug_flag = false;
-bool detect_duplicate_logical_forms = false;
+const thread_local string_map_scribe* debug_terminal_printer;
+const thread_local string_map_scribe* debug_nonterminal_printer;
+thread_local bool debug_flag = false;
+thread_local bool detect_duplicate_logical_forms = false;
 
 thread_local double minimum_priority = 0.0;
 
