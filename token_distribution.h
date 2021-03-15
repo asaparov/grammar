@@ -18,13 +18,13 @@ struct token_distribution
 	typedef V value_type;
 
 	hash_map<unsigned int, pair<V, V>> probabilities;
-	unsigned int atom_count;
+	uint64_t atom_count;
 
 	V prob;
 	V dense_prob;
 	V log_prob;
 
-	token_distribution(unsigned int atom_count) :
+	token_distribution(uint64_t atom_count) :
 		probabilities(16), atom_count(atom_count), prob(1.0 / atom_count), dense_prob(0.0), log_prob(-log(atom_count)) { }
 
 	token_distribution(const token_distribution<V>& src) : probabilities(src.probabilities.table.capacity) {
@@ -114,7 +114,7 @@ private:
 };
 
 template<typename V>
-inline bool init(token_distribution<V>& distribution, unsigned int atom_count)
+inline bool init(token_distribution<V>& distribution, uint64_t atom_count)
 {
 	distribution.atom_count = atom_count;
 	distribution.prob = 1.0 / atom_count;

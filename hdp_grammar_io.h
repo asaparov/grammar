@@ -617,10 +617,10 @@ inline bool parse(token_distribution<V>& prior,
 	if (!read_list(tokens, index, excluded.data, excluded.length, excluded.capacity))
 		return false;
 
-	unsigned int atom_count;
+	unsigned long long atom_count;
 	if (!expect_token(tokens, index, GRAMMAR_FLOAT,
 			"an integer indicating the number of atoms")
-	 || !parse_uint(tokens[index].text, atom_count)
+	 || !parse_ulonglong(tokens[index].text, atom_count)
 	 || !init(prior, atom_count))
 		return false;
 	index++;
