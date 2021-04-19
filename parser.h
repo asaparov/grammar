@@ -34,6 +34,13 @@ constexpr double SLICE_ALPHA = 10.0;
 constexpr double SLICE_BETA = 1.0;
 const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLICE_ALPHA) - lgamma(SLICE_BETA);
 
+/* TODO: the following is for debugging; delete it */
+const thread_local string_map_scribe* debug_terminal_printer;
+const thread_local string_map_scribe* debug_nonterminal_printer;
+thread_local bool debug_flag = false;
+thread_local bool detect_duplicate_logical_forms = false;
+
+
 #include "grammar.h"
 
 #include <core/map.h>
@@ -42,12 +49,6 @@ const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLI
 #include <mutex>
 #include <set>
 
-
-/* TODO: the following is for debugging; delete it */
-const thread_local string_map_scribe* debug_terminal_printer;
-const thread_local string_map_scribe* debug_nonterminal_printer;
-thread_local bool debug_flag = false;
-thread_local bool detect_duplicate_logical_forms = false;
 
 thread_local double minimum_priority = 0.0;
 
@@ -3520,7 +3521,7 @@ bool process_rule_state(
 	Semantics& expanded_logical_forms = *((Semantics*) alloca(sizeof(Semantics)));
 	if ((Mode == MODE_SAMPLE || Mode == MODE_PARSE || Mode == MODE_GENERATE)
 	 && !apply(state.syntax.get_rule().nt.transformations[state.rule_position],
-		 state.logical_form_set, expanded_logical_forms))
+			state.logical_form_set, expanded_logical_forms))
 	{
 		return false;
 	}

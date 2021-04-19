@@ -1812,8 +1812,8 @@ bool is_parseable(hdp_rule_distribution<RulePrior, Semantics>& distribution,
 			print("is_parseable ERROR: Unable to get semantic feature '", stderr);
 			Semantics::print(distribution.feature_sequence[i], stderr);
 			print("' from ground truth logical form at rule: ", stderr);
-			print("      True logical form: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
 			print(syntax.right, stderr, printers); print('\n', stderr);
+			print("  True logical form: ", stderr); print(logical_form, stderr, printers.key); print('\n', stderr);
 			return false;
 		}
 
