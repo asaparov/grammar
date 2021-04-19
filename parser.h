@@ -35,8 +35,9 @@ constexpr double SLICE_BETA = 1.0;
 const double slice_normalization = lgamma(SLICE_ALPHA + SLICE_BETA) - lgamma(SLICE_ALPHA) - lgamma(SLICE_BETA);
 
 /* TODO: the following is for debugging; delete it */
-const thread_local string_map_scribe* debug_terminal_printer;
-const thread_local string_map_scribe* debug_nonterminal_printer;
+#include <core/utility.h>
+const thread_local core::string_map_scribe* debug_terminal_printer;
+const thread_local core::string_map_scribe* debug_nonterminal_printer;
 thread_local bool debug_flag = false;
 thread_local bool detect_duplicate_logical_forms = false;
 
