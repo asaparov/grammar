@@ -1086,6 +1086,12 @@ struct syntax_node {
 		dst.reference_count = src.reference_count;
 	}
 
+	static inline void swap(syntax_node<Semantics>& first, syntax_node<Semantics>& second) {
+		core::swap(first.right, second.right);
+		core::swap(first.children, second.children);
+		core::swap(first.reference_count, second.reference_count);
+	}
+
 	static inline bool is_empty(const syntax_node<Semantics>& key) {
 		return key.reference_count == 0;
 	}

@@ -2678,7 +2678,8 @@ check_log_likelihood(queue, G, syntax, logical_form_set, nonterminal_id, log_lik
 			if (nonterminal.log_probability > log_likelihood) dominates = false;
 			else if (nonterminal.log_probability < log_likelihood) is_dominated = false;
 		}
-		if (is_dominated && completed_cell.completed.length > 0)
+		if (!get_nonterminal<Mode>(G, nonterminal_id).rule_distribution.is_string_preterminal()
+		 && is_dominated && completed_cell.completed.length > 0)
 			return true;
 		if (dominates && completed_cell.completed.length > 0) {
 			/* TODO: once a correct rule completer is implemented
@@ -3954,7 +3955,7 @@ parse_result parse(
 		last_log_priority = log(queue.priority(root_cell));
 
 #if defined(PRINT_SEARCH_STATES)
-if (Mode == MODE_PARSE) {
+if (Mode == MODE_PARSE && queue.iteration > 1000 - 1000) {
 print("[ITERATION ", stderr); print(queue.iteration, stderr); print("] ", stderr);
 print(state, stderr, *debug_nonterminal_printer, *debug_terminal_printer); print("\n\n", stderr);
 }

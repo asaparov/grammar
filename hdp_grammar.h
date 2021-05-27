@@ -1203,15 +1203,85 @@ inline bool parse_number(const rule<Semantics>& observation,
 			if (!integer_str.append(token.data, token.length)) return false;
 		} else if (next == ".") {
 			i++;
-			if (i + 1 != observation.t.length
+			int64_t written;
+			if (i + 2 < observation.t.length
 			 || !parse_ulonglong(map_to_string(token_map, observation.t.terminals[i]), decimal))
 			{
 				could_be_numerical = false;
+			} else if (i + 2 == observation.t.length
+					&& parse_written_number(token_map, observation.t.terminals + i + 1, observation.t.length - i - 1, written))
+			{
+				int64_t integer;
+				if (!parse_long(integer_str, integer))
+					return false;
+
+				/* check that `written` is a power of 10 */
+				unsigned int shift = 0;
+				uint64_t multiplier = 1;
+				bool power_of_10 = (written >= 10);
+				while (power_of_10 && written >= 10) {
+					int64_t next = written / 10;
+					if (written != next * 10)
+						power_of_10 = false;
+					written = next;
+					multiplier *= 10;
+					shift++;
+				}
+
+				if (power_of_10) {
+					/* count the number of digits in `decimal` */
+					unsigned int decimal_digits = 0;
+					unsigned long long current = decimal;
+					while (current != 0) {
+						current /= 10;
+						decimal_digits++;
+					}
+
+					integer *= multiplier;
+					multiplier = 1;
+					if (decimal_digits < shift) {
+						for (unsigned int j = 0; j < shift - decimal_digits; j++)
+							multiplier *= 10;
+						integer += decimal * multiplier;
+						decimal = 0;
+					} else {
+						for (unsigned int j = 0; j < decimal_digits - shift; j++)
+							multiplier *= 10;
+						integer += decimal / multiplier;
+						decimal -= (decimal / multiplier) * multiplier;
+					}
+
+					return set_number(dst_logical_form, src_logical_form, integer, decimal);
+				}
 			}
 			break;
 		} else {
-			could_be_numerical = false;
-			break;
+			int64_t written;
+			if (i + 1 == observation.t.length
+			 && parse_written_number(token_map, observation.t.terminals + i, observation.t.length - i, written))
+			{
+				int64_t integer;
+				if (!parse_long(integer_str, integer))
+					return false;
+
+				/* check that `written` is a power of 10 */
+				uint64_t multiplier = 1;
+				bool power_of_10 = (written >= 10);
+				while (power_of_10 && written >= 10) {
+					int64_t next = written / 10;
+					if (written != next * 10)
+						power_of_10 = false;
+					written = next;
+					multiplier *= 10;
+				}
+
+				integer *= multiplier;
+				return set_number(dst_logical_form, src_logical_form, integer, 0);
+
+			} else {
+				could_be_numerical = false;
+				break;
+			}
 		}
 	}
 
