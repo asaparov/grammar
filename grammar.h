@@ -9,7 +9,7 @@
 #define GRAMMAR_H_
 
 #include <math.h>
-#include <limits.h>
+#include <limits>
 #include <core/array.h>
 #include <core/map.h>
 #include <core/io.h>

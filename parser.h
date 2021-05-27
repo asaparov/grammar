@@ -3124,11 +3124,18 @@ inline bool complete_invert_state(
 	const Morphology& morphology_parser,
 	const invert_iterator_state<Mode, Semantics>& state)
 {
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 	Semantics& logical_form = *((Semantics*) alloca(sizeof(Semantics)));
 	if (Mode != MODE_COMPUTE_BOUNDS)
 		logical_form = state.inverse[state.index];
 	bool result = complete_invert_state<AllowAmbiguous>(queue, G, parse_chart, sentence,
 			morphology_parser, *state.rule, state.syntax, logical_form, state.log_probability);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 	if (Mode != MODE_COMPUTE_BOUNDS)
 		free(logical_form);
 	return result;
