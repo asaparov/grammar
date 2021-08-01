@@ -1205,7 +1205,7 @@ inline bool parse_number(const rule<Semantics>& observation,
 			i++;
 			int64_t written;
 			if (i + 2 < observation.t.length
-			 || !parse_ulonglong(map_to_string(token_map, observation.t.terminals[i]), decimal))
+			 || (i < observation.t.length && !parse_ulonglong(map_to_string(token_map, observation.t.terminals[i]), decimal)))
 			{
 				could_be_numerical = false;
 			} else if (i + 2 == observation.t.length
