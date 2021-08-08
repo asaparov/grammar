@@ -1200,7 +1200,7 @@ inline bool parse_number(const rule<Semantics>& observation,
 
 		const string& next = map_to_string(token_map, observation.t.terminals[i]);
 		if (next == ",") {
-			if (!integer_str.append(token.data, token.length)) return false;
+			if (!integer_str.add(',')) return false;
 		} else if (next == ".") {
 			i++;
 			int64_t written;
