@@ -1725,6 +1725,23 @@ inline bool operator == (const rooted_syntax_node<Semantics>& first, const roote
 		&& *first.tree == *second.tree;
 }
 
+template<typename Semantics, typename Stream,
+	typename NonterminalPrinter, typename TerminalPrinter>
+inline bool print(const rooted_syntax_node<Semantics>& node, Stream& out,
+		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer)
+{
+	return print(*node.tree, out, nonterminal_printer, terminal_printer, node.root);
+}
+
+template<typename Semantics, typename Stream,
+	typename NonterminalPrinter, typename TerminalPrinter>
+inline bool print(const rooted_syntax_node<Semantics>& node, Stream& out,
+		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer,
+		const Semantics& logical_form)
+{
+	return print(*node.tree, out, nonterminal_printer, terminal_printer, logical_form, node.root);
+}
+
 struct null_semantics {
 	enum feature {
 		FEATURE_NULL
