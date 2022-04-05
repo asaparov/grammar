@@ -996,7 +996,7 @@ inline bool print_iteration(const parser_search_state<Mode, Semantics>& state, S
 
 template<parse_mode Mode, typename Semantics, typename Stream,
 	typename NonterminalPrinter, typename TerminalPrinter>
-inline bool print(const parser_search_state<Mode, Semantics>& state, Stream& out,
+inline bool print(const parser_search_state<Mode, Semantics>& state, Stream&& out,
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer)
 {
 	switch (state.phase) {

@@ -168,12 +168,13 @@ bool grammar_lex(array<grammar_token>& tokens,
 	position current = position(1, 1);
 	grammar_lexer_state state = GRAMMAR_START;
 	array<char> token = array<char>(1024);
+	mbstate_t shift = { 0 };
 
 	for (unsigned int i = 0; i < length;) {
-		wchar_t next, peek;
+		char32_t next, peek;
 		bool new_line = false;
 		unsigned int peek_width;
-		unsigned int char_width = mbtowc(&next, input + i, length - i);
+		unsigned int char_width = mbrtoc32(&next, input + i, length - i, &shift);
 
 		switch (next) {
 		case '"':
@@ -196,7 +197,7 @@ bool grammar_lex(array<grammar_token>& tokens,
 
 		case '\r':
 			if (i + char_width < length) {
-				peek_width = mbtowc(&peek, input + i + char_width, length - i - char_width);
+				peek_width = mbrtoc32(&peek, input + i + char_width, length - i - char_width, &shift);
 				if (peek_width > 0 && peek == '\n') {
 					i += char_width; current.column++;
 					char_width = peek_width; next = peek;
@@ -291,7 +292,7 @@ bool grammar_lex(array<grammar_token>& tokens,
 			while (i + peek_width < length) {
 				i += peek_width;
 				current.column += peek_width;
-				peek_width = mbtowc(&peek, input + i, length - i);
+				peek_width = mbrtoc32(&peek, input + i, length - i, &shift);
 				if (peek == '\n' || peek_width == 0) {
 					break;
 				} else if (peek_width == static_cast<unsigned int>(-1)) {
@@ -354,7 +355,7 @@ bool grammar_lex(array<grammar_token>& tokens,
 				if (!token.append(input + i, char_width))
 					return false;
 				if (i + char_width < length) {
-					peek_width = mbtowc(&peek, input + i + char_width, length - i - char_width);
+					peek_width = mbrtoc32(&peek, input + i + char_width, length - i - char_width, &shift);
 					if (peek_width > 0 && (peek == '+' || peek == '-')) {
 						if (!token.append(input + i + char_width, peek_width))
 							return false;
@@ -1232,10 +1233,11 @@ bool derivation_lex(array<derivation_token>& tokens,
 	derivation_lexer_state state = derivation_lexer_state::DEFAULT;
 	array<char> token = array<char>(1024);
 
-	std::mbstate_t shift = {0};
-	wint_t next = fgetwc(input);
+	mbstate_t shift = {0};
+	buffered_stream<MB_LEN_MAX, Stream> wrapper(input);
+	char32_t next = fgetc32(wrapper);
 	bool new_line = false;
-	while (next != WEOF) {
+	while (next != static_cast<char32_t>(-1)) {
 		switch (state) {
 		case derivation_lexer_state::TOKEN:
 			if (next == '(' || next == ')' || next == ':' || next == ',' || next == '/') {
@@ -1310,7 +1312,7 @@ bool derivation_lex(array<derivation_token>& tokens,
 			current.column = 1;
 			new_line = false;
 		} else current.column++;
-		next = fgetwc(input);
+		next = fgetc32(wrapper);
 	}
 
 	if (state == derivation_lexer_state::TOKEN)

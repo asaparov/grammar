@@ -1211,8 +1211,8 @@ inline bool parse_number(const rule<Semantics>& observation,
 			} else if (i + 2 == observation.t.length
 					&& parse_written_number(token_map, observation.t.terminals + i + 1, observation.t.length - i - 1, written))
 			{
-				int64_t integer;
-				if (!parse_long(integer_str, integer))
+				long long integer;
+				if (!parse_long_long(integer_str, integer))
 					return false;
 
 				/* check that `written` is a power of 10 */
@@ -1251,7 +1251,7 @@ inline bool parse_number(const rule<Semantics>& observation,
 						decimal -= (decimal / multiplier) * multiplier;
 					}
 
-					return set_number(dst_logical_form, src_logical_form, integer, decimal);
+					return set_number(dst_logical_form, src_logical_form, (int64_t) integer, decimal);
 				}
 			}
 			break;
@@ -1260,8 +1260,8 @@ inline bool parse_number(const rule<Semantics>& observation,
 			if (i + 1 == observation.t.length
 			 && parse_written_number(token_map, observation.t.terminals + i, observation.t.length - i, written))
 			{
-				int64_t integer;
-				if (!parse_long(integer_str, integer))
+				long long integer;
+				if (!parse_long_long(integer_str, integer))
 					return false;
 
 				/* check that `written` is a power of 10 */
@@ -1276,7 +1276,7 @@ inline bool parse_number(const rule<Semantics>& observation,
 				}
 
 				integer *= multiplier;
-				return set_number(dst_logical_form, src_logical_form, integer, 0);
+				return set_number(dst_logical_form, src_logical_form, (int64_t) integer, 0);
 
 			} else {
 				could_be_numerical = false;
@@ -1285,10 +1285,11 @@ inline bool parse_number(const rule<Semantics>& observation,
 		}
 	}
 
+	long long integer_val;
+	if (could_be_numerical && parse_long_long(integer_str, integer_val))
+		return set_number(dst_logical_form, src_logical_form, (int64_t) integer_val, decimal);
 	int64_t integer;
-	if (could_be_numerical && parse_long(integer_str, integer)) {
-		return set_number(dst_logical_form, src_logical_form, integer, decimal);
-	} else if (parse_written_number(token_map, observation.t.terminals, observation.t.length, integer)) {
+	if (parse_written_number(token_map, observation.t.terminals, observation.t.length, integer)) {
 		return set_number(dst_logical_form, src_logical_form, integer, 0);
 	} else {
 		return false;

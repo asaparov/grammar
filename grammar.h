@@ -132,7 +132,7 @@ inline bool write(const transformation<Semantics>& t, Stream& out) {
 }
 
 template<typename Semantics, typename Stream>
-inline bool print(const transformation<Semantics>& t, Stream& out) {
+inline bool print(const transformation<Semantics>& t, Stream&& out) {
 	if (t.function_count == 0) return true;
 	if (!Semantics::print(t.functions[0], out)) return false;
 	for (unsigned int i = 1; i < t.function_count; i++) {
@@ -734,7 +734,7 @@ inline bool operator < (const rule<Semantics>& first, const rule<Semantics>& sec
 }
 
 template<typename Semantics, typename Stream, typename AtomPrinter, typename NonterminalPrinter>
-inline bool print(const rule<Semantics>& r, Stream& out, pair<AtomPrinter&, NonterminalPrinter&> printers) {
+inline bool print(const rule<Semantics>& r, Stream&& out, pair<AtomPrinter&, NonterminalPrinter&> printers) {
 	switch (r.type) {
 	case rule_type::TERMINAL:
 		return print(r.t, out, printers.key);
@@ -1265,7 +1265,7 @@ bool print(const syntax_node<Semantics>& node, Stream& out, unsigned int indent,
 
 template<typename Semantics, typename Stream,
 	typename NonterminalPrinter, typename TerminalPrinter>
-bool print(const syntax_node<Semantics>& node, Stream& out,
+bool print(const syntax_node<Semantics>& node, Stream&& out,
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer,
 		unsigned int root_nonterminal = 1)
 {
@@ -1312,7 +1312,7 @@ bool print(const syntax_node<Semantics>& node, Stream& out, unsigned int indent,
 
 template<typename Semantics, typename Stream,
 	typename NonterminalPrinter, typename TerminalPrinter>
-bool print(const syntax_node<Semantics>& node, Stream& out,
+bool print(const syntax_node<Semantics>& node, Stream&& out,
 		NonterminalPrinter& nonterminal_printer, TerminalPrinter& terminal_printer,
 		const Semantics& logical_form, unsigned int root_nonterminal = 1)
 {
