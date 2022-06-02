@@ -286,7 +286,7 @@ struct fixed_array {
 
 template<typename T, typename Stream, typename... Printer,
 	typename std::enable_if<is_printable<Stream>::value>::type* = nullptr>
-inline bool print(const fixed_array<T>& a, Stream& out, Printer&&... printer) {
+inline bool print(const fixed_array<T>& a, Stream&& out, Printer&&... printer) {
 	return print(a.elements, a.length, out, std::forward<Printer>(printer)...);
 }
 
